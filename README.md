@@ -1,7 +1,3 @@
-# Loquat Post-Quantum Signature Scheme - Proof of Concept
-
-This repository implements **all six algorithms** from the paper ["Loquat: A SNARK-Friendly Post-Quantum Signature based on the Legendre PRF with Applications in Ring and Aggregate Signatures"](https://eprint.iacr.org/2024/868.pdf) by Zhang et al.
-
 ## Overview
 
 Loquat is a novel post-quantum signature scheme that:
