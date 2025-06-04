@@ -1,4 +1,4 @@
-# Loquat Post-Quantum Signature Scheme - Complete Implementation
+# Loquat Post-Quantum Signature Scheme - Proof of Concept
 
 This repository implements **all six algorithms** from the paper ["Loquat: A SNARK-Friendly Post-Quantum Signature based on the Legendre PRF with Applications in Ring and Aggregate Signatures"](https://eprint.iacr.org/2024/868.pdf) by Zhang et al.
 
@@ -11,7 +11,7 @@ Loquat is a novel post-quantum signature scheme that:
 - Uses only **symmetric-key primitives** for security assumptions
 - Enables **zero-knowledge proofs** of signature validity
 
-## Complete Algorithm Suite
+## Algorithm Suite
 
 ### Algorithm 1: IOP-based Key Identification of the Legendre PRF
 
@@ -108,7 +108,7 @@ For query = 1 to κ:
     verify folding consistency
 ```
 
-## Complete Signature Structure
+## Signature Structure
 
 ```rust
 struct LoquatSignature {
@@ -169,27 +169,6 @@ Algorithm 5 (Phases 4-5) → Algorithm 6 (Phases 6-7) → Complete Signature
 4. **Hash Function Calls**: Use SNARK-friendly hash functions
 5. **Polynomial Evaluations**: Direct translation to circuit constraints
 
-## Performance Characteristics
-
-### Our Implementation (Demo Fields)
-- **Signing Time**: ~5ms (128-bit security)
-- **Verification Time**: ~0.8ms (128-bit security)
-- **Signature Size**: 35.1 KB (128-bit), 65.8 KB (256-bit)
-- **Throughput**: 194 signatures/second, 1,286 verifications/second
-
-### Paper Results (Production Fields)
-- **Signing Time**: 5.04 seconds (2^127-1 field)
-- **Verification Time**: 0.21 seconds
-- **Signature Size**: 46 KB
-- **Circuit Size**: ~148K R1CS constraints
-- **Efficiency**: 7-175× better than MPC-in-the-head schemes
-
-### Scaling Properties
-- **Security Levels**: Supports 64, 128, 256-bit security
-- **Batch Verification**: Linear scaling with optimizations
-- **Memory Usage**: Proportional to field size and security parameter
-- **Circuit Depth**: Logarithmic in witness size due to sumcheck
-
 ## Advanced Features
 
 ### Additional Authenticated Data (AAD)
@@ -239,26 +218,6 @@ cargo test    # All 13 tests pass
 cargo run     # Complete demo with all algorithms
 ```
 
-## Applications
-
-### Direct Applications
-- **Post-Quantum Digital Signatures**: Drop-in replacement for classical schemes
-- **Blockchain Integration**: Quantum-resistant transaction signing
-- **Secure Communications**: Message authentication in post-quantum protocols
-- **Code Signing**: Software authenticity with quantum resistance
-
-### Advanced Applications  
-- **Aggregate Signatures**: Combine multiple signatures efficiently
-- **Ring Signatures**: Anonymous signing within groups
-- **Threshold Signatures**: Distributed signature generation
-- **Zero-Knowledge Proofs**: Prove signature validity without revealing signatures
-
-### SNARK Applications
-- **Signature Verification in ZK**: Prove message was signed without revealing signature
-- **Anonymous Credentials**: Zero-knowledge proofs of certified attributes
-- **Private Blockchains**: Validate transactions while hiding details
-- **Scalable Verification**: Batch verify many signatures in constant time
-
 ## Implementation Architecture
 
 ### Module Structure
@@ -270,37 +229,6 @@ src/
 ├── sign.rs       - Algorithms 4-6: Complete signing protocol
 └── main.rs       - Integration and demonstration
 ```
-
-### Key Components
-- **Field Arithmetic**: Secure modular operations with overflow protection
-- **Legendre PRF**: Efficient implementation using Euler's criterion
-- **Sumcheck Protocol**: Complete univariate sumcheck with zero-knowledge
-- **LDT Protocol**: Low-degree testing with folding and query phases
-- **Hash Functions**: SHA-256 based collision-resistant functions
-- **Merkle Trees**: Authentication paths for LDT queries
-
-## Production Deployment
-
-### Security Considerations
-- Use production field sizes: p = 2^127 - 1 (128-bit), p = 2^255 - 1 (256-bit)
-- Implement side-channel protection for secret key operations
-- Use constant-time field arithmetic implementations
-- Secure random number generation for all randomness
-- Regular security audits and cryptanalysis updates
-
-### Performance Optimization
-- Precompute cosets H and U during setup phase
-- Implement batch verification for multiple signatures
-- Use SNARK-friendly hash functions (Poseidon, Rescue)
-- Optimize polynomial evaluation with FFT techniques
-- Parallelize sumcheck and LDT computations
-
-### Integration Guidelines
-- Standard signature API compatibility (sign/verify interface)
-- Serialization support for all signature components
-- Network protocol integration with proper encoding
-- Hardware security module (HSM) support for key storage
-- Audit logging for signature operations
 
 ## References
 
