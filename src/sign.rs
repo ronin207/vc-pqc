@@ -414,41 +414,158 @@ pub fn loquat_verify(
     Ok(true)
 }
 
-// Helper functions
-fn compute_merkle_commitment(data: &[u128]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    for &value in data {
-        hasher.update(&value.to_le_bytes());
-    }
-    hasher.finalize().to_vec()
+// Enhanced Merkle tree implementation for LDT protocol
+/// Complete Merkle tree structure for LDT folding
+#[derive(Debug, Clone)]
+struct MerkleTree {
+    /// Leaf values (field elements)
+    leaves: Vec<u128>,
+    /// Internal node hashes (organized by levels)
+    nodes: Vec<Vec<Vec<u8>>>,
+    /// Root hash
+    root: Vec<u8>,
 }
 
-fn generate_auth_path(codeword: &[u128], position: usize) -> Vec<Vec<u8>> {
-    let mut auth_path = Vec::new();
-    let mut current_pos = position;
-    let mut current_len = codeword.len();
-    
-    while current_len > 1 {
-        let sibling_pos = if current_pos % 2 == 0 {
-            current_pos + 1
-        } else {
-            current_pos - 1
+impl MerkleTree {
+    /// Build complete Merkle tree from leaf values
+    fn new(leaves: Vec<u128>) -> Self {
+        let mut tree = MerkleTree {
+            leaves: leaves.clone(),
+            nodes: Vec::new(),
+            root: Vec::new(),
         };
         
-        let sibling_hash = if sibling_pos < current_len {
-            let mut hasher = Sha256::new();
-            hasher.update(&codeword[sibling_pos].to_le_bytes());
-            hasher.finalize().to_vec()
-        } else {
-            vec![0u8; 32]
-        };
-        
-        auth_path.push(sibling_hash);
-        current_pos /= 2;
-        current_len = (current_len + 1) / 2;
+        tree.build_tree();
+        tree
     }
     
-    auth_path
+    /// Build the complete Merkle tree structure
+    fn build_tree(&mut self) {
+        let mut current_level = Vec::new();
+        
+        // Hash all leaf values to create bottom level
+        for &leaf in &self.leaves {
+            let mut hasher = Sha256::new();
+            hasher.update(&leaf.to_le_bytes());
+            hasher.update(b"LOQUAT_LEAF"); // Domain separation
+            current_level.push(hasher.finalize().to_vec());
+        }
+        
+        // Build tree level by level
+        while current_level.len() > 1 {
+            self.nodes.push(current_level.clone());
+            let mut next_level = Vec::new();
+            
+            for i in (0..current_level.len()).step_by(2) {
+                let left = &current_level[i];
+                let right = if i + 1 < current_level.len() {
+                    &current_level[i + 1]
+                } else {
+                    // Pad with zero hash for odd-length levels
+                    &vec![0u8; 32]
+                };
+                
+                let mut hasher = Sha256::new();
+                hasher.update(left);
+                hasher.update(right);
+                hasher.update(b"LOQUAT_NODE"); // Domain separation
+                next_level.push(hasher.finalize().to_vec());
+            }
+            
+            current_level = next_level;
+        }
+        
+        // Set root (or empty if no leaves)
+        self.root = current_level.into_iter().next().unwrap_or_else(|| vec![0u8; 32]);
+    }
+    
+    /// Generate authentication path for a leaf at given position
+    fn generate_auth_path(&self, position: usize) -> Result<Vec<Vec<u8>>, String> {
+        if position >= self.leaves.len() {
+            return Err(format!("Position {} out of bounds for {} leaves", position, self.leaves.len()));
+        }
+        
+        let mut auth_path = Vec::new();
+        let mut current_pos = position;
+        
+        // For each level from bottom to top
+        for level in &self.nodes {
+            let sibling_pos = if current_pos % 2 == 0 {
+                current_pos + 1
+            } else {
+                current_pos - 1
+            };
+            
+            let sibling_hash = if sibling_pos < level.len() {
+                level[sibling_pos].clone()
+            } else {
+                // Sibling doesn't exist (odd number of nodes), use zero hash
+                vec![0u8; 32]
+            };
+            
+            auth_path.push(sibling_hash);
+            current_pos /= 2;
+        }
+        
+        Ok(auth_path)
+    }
+    
+    /// Verify authentication path for a leaf
+    fn verify_auth_path(&self, position: usize, leaf_value: u128, auth_path: &[Vec<u8>]) -> bool {
+        if position >= self.leaves.len() || auth_path.len() != self.nodes.len() {
+            return false;
+        }
+        
+        // Start with leaf hash
+        let mut hasher = Sha256::new();
+        hasher.update(&leaf_value.to_le_bytes());
+        hasher.update(b"LOQUAT_LEAF");
+        let mut current_hash = hasher.finalize().to_vec();
+        
+        let mut current_pos = position;
+        
+        // Traverse up the tree using authentication path
+        for sibling_hash in auth_path {
+            let mut hasher = Sha256::new();
+            
+            if current_pos % 2 == 0 {
+                // Current node is left child
+                hasher.update(&current_hash);
+                hasher.update(sibling_hash);
+            } else {
+                // Current node is right child
+                hasher.update(sibling_hash);
+                hasher.update(&current_hash);
+            }
+            
+            hasher.update(b"LOQUAT_NODE");
+            current_hash = hasher.finalize().to_vec();
+            current_pos /= 2;
+        }
+        
+        // Should equal root hash
+        current_hash == self.root
+    }
+    
+    /// Get root hash
+    fn get_root(&self) -> &[u8] {
+        &self.root
+    }
+}
+
+/// Compute Merkle commitment with complete tree structure
+fn compute_merkle_commitment(data: &[u128]) -> Vec<u8> {
+    let tree = MerkleTree::new(data.to_vec());
+    tree.get_root().to_vec()
+}
+
+/// Generate complete authentication path using Merkle tree
+fn generate_auth_path(codeword: &[u128], position: usize) -> Vec<Vec<u8>> {
+    let tree = MerkleTree::new(codeword.to_vec());
+    tree.generate_auth_path(position).unwrap_or_else(|_| {
+        // Fallback to simple hash path for invalid positions
+        vec![vec![0u8; 32]]
+    })
 }
 
 fn verify_sumcheck_proof(
@@ -471,12 +588,14 @@ fn verify_sumcheck_proof(
     Ok(true)
 }
 
+/// Enhanced LDT proof verification with complete Merkle tree validation
 fn verify_ldt_proof(
     folding: &LDTFoldingProof,
     queries: &[LDTQuery],
     codeword: &[u128],
     params: &LoquatPublicParams,
 ) -> Result<bool, String> {
+    // Basic structural checks
     if folding.num_rounds != params.r {
         return Ok(false);
     }
@@ -485,13 +604,96 @@ fn verify_ldt_proof(
         return Ok(false);
     }
     
+    if folding.folded_polynomials.len() != params.r {
+        return Ok(false);
+    }
+    
+    if folding.merkle_commitments.len() != params.r {
+        return Ok(false);
+    }
+    
+    // Build Merkle tree for original codeword
+    let original_tree = MerkleTree::new(codeword.to_vec());
+    
+    // Verify each query
     for query in queries {
+        // Check basic validity
         if query.position >= codeword.len() {
             return Ok(false);
         }
         
         if query.value != codeword[query.position] {
             return Ok(false);
+        }
+        
+        // Verify authentication path for original codeword
+        if !original_tree.verify_auth_path(query.position, query.value, &query.auth_path) {
+            return Ok(false);
+        }
+        
+        // Verify folding consistency
+        let mut current_pos = query.position;
+        let mut current_value = query.value;
+        
+        for (round, folded_poly) in folding.folded_polynomials.iter().enumerate() {
+            // Check consistency value matches folded polynomial
+            let folded_pos = current_pos / 2;
+            if folded_pos >= folded_poly.len() {
+                return Ok(false);
+            }
+            
+            let expected_folded_value = folded_poly[folded_pos];
+            if round < query.consistency_values.len() {
+                if query.consistency_values[round] != expected_folded_value {
+                    return Ok(false);
+                }
+            }
+            
+            // Verify folding operation: folded[i] = old[2i] + challenge * old[2i+1]
+            if round < folding.folding_challenges.len() {
+                let challenge = folding.folding_challenges[round];
+                let even_pos = (current_pos / 2) * 2;
+                let odd_pos = even_pos + 1;
+                
+                // Get the sibling value for folding verification
+                if round == 0 {
+                    // For first round, use original codeword
+                    let even_val = if even_pos < codeword.len() { codeword[even_pos] } else { 0 };
+                    let odd_val = if odd_pos < codeword.len() { codeword[odd_pos] } else { 0 };
+                    let computed_fold = (even_val + challenge * odd_val) % params.field_p;
+                    
+                    if expected_folded_value != computed_fold {
+                        return Ok(false);
+                    }
+                } else {
+                    // For subsequent rounds, use previous folded polynomial
+                    if round > 0 && round <= folding.folded_polynomials.len() {
+                        let prev_poly = &folding.folded_polynomials[round - 1];
+                        let even_val = if even_pos < prev_poly.len() { prev_poly[even_pos] } else { 0 };
+                        let odd_val = if odd_pos < prev_poly.len() { prev_poly[odd_pos] } else { 0 };
+                        let computed_fold = (even_val + challenge * odd_val) % params.field_p;
+                        
+                        if expected_folded_value != computed_fold {
+                            return Ok(false);
+                        }
+                    }
+                }
+            }
+            
+            current_pos = folded_pos;
+            current_value = expected_folded_value;
+        }
+        
+        // Verify Merkle commitments for each folding round
+        for (round, commitment) in folding.merkle_commitments.iter().enumerate() {
+            if round < folding.folded_polynomials.len() {
+                let folded_poly = &folding.folded_polynomials[round];
+                let expected_commitment = compute_merkle_commitment(folded_poly);
+                
+                if commitment != &expected_commitment {
+                    return Ok(false);
+                }
+            }
         }
     }
     
