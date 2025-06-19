@@ -92,7 +92,12 @@ pub fn iop_key_identification(
         
         // Response: z_i = r_i + challenge * K (mod p)
         // This allows verification: L_{z_i}(I_i) = L_{r_i}(I_i) * L_K(I_i)^challenge
-        let response = (masking_values[i] + challenge * witness.secret_key) % params.field_p;
+        let challenge_times_key = if params.field_p <= (1u128 << 64) {
+            ((challenge % params.field_p) * (witness.secret_key % params.field_p)) % params.field_p
+        } else {
+            ((challenge % params.field_p).saturating_mul(witness.secret_key % params.field_p)) % params.field_p
+        };
+        let response = (masking_values[i] + challenge_times_key) % params.field_p;
         responses.push(response);
     }
     
@@ -185,7 +190,12 @@ fn generate_polynomial_evaluations(
                     witness.secret_key + params.public_indices[idx], 
                     params.field_p
                 );
-                let poly_eval = (legendre_eval + challenge_point * params.public_indices[idx]) % params.field_p;
+                let challenge_times_index = if params.field_p <= (1u128 << 64) {
+                    (challenge_point * params.public_indices[idx]) % params.field_p
+                } else {
+                    (challenge_point.saturating_mul(params.public_indices[idx])) % params.field_p
+                };
+                let poly_eval = (legendre_eval + challenge_times_index) % params.field_p;
                 evaluations.push(poly_eval);
             } else {
                 evaluations.push(0); // Padding

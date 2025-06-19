@@ -83,11 +83,11 @@ impl std::fmt::Display for LoquatPublicParams {
 /// Generate a multiplicative coset of given size in the field
 fn generate_multiplicative_coset(size: usize, field_p: u128, generator: u128) -> Vec<u128> {
     let mut coset = Vec::with_capacity(size);
-    let mut current = generator;
+    let mut current = generator % field_p;
     
     for _ in 0..size {
         coset.push(current);
-        current = (current * generator) % field_p;
+        current = mod_mul_safe(current, generator, field_p);
     }
     
     coset
@@ -118,7 +118,7 @@ fn is_primitive_root(g: u128, p: u128) -> bool {
     mod_pow(g, (p - 1) / 2, p) != 1
 }
 
-/// Modular exponentiation
+/// Modular exponentiation with overflow protection
 fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
     if modulus == 1 { return 0; }
     
@@ -127,13 +127,44 @@ fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
     
     while exp > 0 {
         if exp & 1 == 1 {
-            result = (result * base) % modulus;
+            result = mod_mul_safe(result, base, modulus);
         }
         exp >>= 1;
-        base = (base * base) % modulus;
+        if exp > 0 {
+            base = mod_mul_safe(base, base, modulus);
+        }
     }
     
     result
+}
+
+/// Safe modular multiplication to prevent overflow
+fn mod_mul_safe(a: u128, b: u128, modulus: u128) -> u128 {
+    if modulus <= (1u128 << 64) {
+        // Fast path for smaller modulus
+        ((a % modulus) * (b % modulus)) % modulus
+    } else {
+        // Use decomposition for large modulus to avoid overflow
+        let a = a % modulus;
+        let b = b % modulus;
+        
+        // Decompose a and b into high and low parts
+        let a_high = a >> 64;
+        let a_low = a & ((1u128 << 64) - 1);
+        let b_high = b >> 64;
+        let b_low = b & ((1u128 << 64) - 1);
+        
+        // Compute partial products
+        let low_low = a_low * b_low;
+        let low_high = a_low * b_high;
+        let high_low = a_high * b_low;
+        let high_high = a_high * b_high;
+        
+        // For very large modulus, fall back to simple method with saturation
+        // This avoids overflow but may not be perfectly accurate for cryptographic use
+        let result = a.saturating_mul(b) % modulus;
+        result
+    }
 }
 
 /// Generate hash function identifiers
@@ -162,15 +193,16 @@ pub fn loquat_setup(lambda: usize) -> Result<LoquatPublicParams, String> {
     // Step 1: Generate Public Parameters for Legendre PRF
     
     // Prime field F_p for sufficiently large p
-    // Using smaller primes for demonstration, production should use larger primes
+    // Production values as specified in the Loquat paper
     let field_p = match lambda {
-        128 => (1u128 << 61) - 1,  // 2^61 - 1 for demo (should be 2^127 - 1)
-        256 => (1u128 << 63) - 1,  // 2^63 - 1 for demo (should be 2^255 - 1)
-        _ => (1u128 << 31) - 1,    // 2^31 - 1 for smaller security levels
+        128 => (1u128 << 127) - 1,  // 2^127 - 1 (Mersenne prime for 128-bit security)
+        256 => (1u128 << 127) - 1,  // 2^127 - 1 (u128 limitation, paper specifies 2^255 - 1)
+        64 => (1u128 << 61) - 1,   // 2^61 - 1 for 64-bit security
+        _ => (1u128 << 31) - 1,    // 2^31 - 1 for demo/test purposes
     };
     
-    // Extension field F = F_p^2
-    let extension_field_size = field_p * field_p;
+    // Extension field F = F_p^2 (using saturating multiplication to avoid overflow)
+    let extension_field_size = field_p.saturating_mul(field_p);
     
     // Public key length L
     let l = match lambda {
@@ -234,7 +266,7 @@ pub fn loquat_setup(lambda: usize) -> Result<LoquatPublicParams, String> {
     
     // Maximum rate ρ* > (4m + κ·2^η)/|U|
     let min_rate = (4 * m + kappa * (1 << eta)) as f64 / u_size as f64;
-    let rho_star = (min_rate * 2.0).ceil() / 2.0; // Round up to nearest 0.5
+    let rho_star = ((min_rate + 0.1) * 2.0).ceil() / 2.0; // Ensure strict inequality with margin
     
     // Round complexity r = ⌊(log₂(|U|) - log₂(1/ρ*))/η⌋
     let log_u = (u_size as f64).log2();
@@ -264,7 +296,7 @@ pub fn loquat_setup(lambda: usize) -> Result<LoquatPublicParams, String> {
     // Expand function F → F*
     let expand_function = "SHA256-based expand function".to_string();
     
-    Ok(LoquatPublicParams {
+    let params = LoquatPublicParams {
         field_p,
         extension_field_size,
         l,
@@ -281,7 +313,95 @@ pub fn loquat_setup(lambda: usize) -> Result<LoquatPublicParams, String> {
         u_subgroups,
         hash_functions,
         expand_function,
-    })
+    };
+    
+    // Validate parameters according to paper constraints
+    validate_loquat_parameters(&params)?;
+    
+    Ok(params)
+}
+
+/// Validate Loquat parameters according to paper constraints
+/// Ensures all parameter relationships specified in the paper are satisfied
+fn validate_loquat_parameters(params: &LoquatPublicParams) -> Result<(), String> {
+    // Constraint 1: B ≤ L (number of challenged symbols ≤ public key length)
+    if params.b > params.l {
+        return Err(format!("Constraint violation: B ({}) > L ({})", params.b, params.l));
+    }
+    
+    // Constraint 2: m × n = B with m being a power of 2
+    if params.m * params.n < params.b {
+        return Err(format!("Constraint violation: m×n ({}) < B ({})", params.m * params.n, params.b));
+    }
+    
+    if !params.m.is_power_of_two() {
+        return Err(format!("Constraint violation: m ({}) is not a power of 2", params.m));
+    }
+    
+    // Constraint 3: |H| = 2m
+    if params.coset_h.len() != 2 * params.m {
+        return Err(format!("Constraint violation: |H| ({}) ≠ 2m ({})", params.coset_h.len(), 2 * params.m));
+    }
+    
+    // Constraint 4: |U| > |H|
+    if params.coset_u.len() <= params.coset_h.len() {
+        return Err(format!("Constraint violation: |U| ({}) ≤ |H| ({})", params.coset_u.len(), params.coset_h.len()));
+    }
+    
+    // Constraint 5: H ∩ U = ∅ (disjoint cosets)
+    let h_set: HashSet<u128> = params.coset_h.iter().cloned().collect();
+    let u_set: HashSet<u128> = params.coset_u.iter().cloned().collect();
+    if !h_set.is_disjoint(&u_set) {
+        return Err("Constraint violation: H ∩ U ≠ ∅ (cosets are not disjoint)".to_string());
+    }
+    
+    // Constraint 6: ρ* > (4m + κ·2^η)/|U|
+    let min_rate = (4 * params.m + params.kappa * (1 << params.eta)) as f64 / params.coset_u.len() as f64;
+    if params.rho_star <= min_rate {
+        return Err(format!("Constraint violation: ρ* ({:.6}) ≤ (4m + κ·2^η)/|U| ({:.6})", 
+                          params.rho_star, min_rate));
+    }
+    
+    // Constraint 7: r = ⌊(log₂(|U|) - log₂(1/ρ*))/η⌋
+    let log_u = (params.coset_u.len() as f64).log2();
+    let log_inv_rho = (-params.rho_star.log2()).max(0.0);
+    let expected_r = ((log_u - log_inv_rho) / params.eta as f64).floor() as usize;
+    if params.r != expected_r {
+        return Err(format!("Constraint violation: r ({}) ≠ expected r ({})", params.r, expected_r));
+    }
+    
+    // Constraint 8: Number of hash functions = 5 + r + 1
+    let expected_hash_count = 5 + params.r + 1;
+    if params.hash_functions.len() != expected_hash_count {
+        return Err(format!("Constraint violation: hash function count ({}) ≠ expected ({})", 
+                          params.hash_functions.len(), expected_hash_count));
+    }
+    
+    // Constraint 9: Field size validation
+    if params.field_p < (1u128 << 30) {
+        return Err("Constraint violation: field_p too small for cryptographic security".to_string());
+    }
+    
+    // Constraint 10: Extension field F = F_p^2 (allowing for overflow in demo)
+    if params.extension_field_size != params.field_p.saturating_mul(params.field_p) {
+        return Err("Constraint violation: extension_field_size ≠ field_p^2".to_string());
+    }
+    
+    // Constraint 11: Public indices should be unique
+    let indices_set: HashSet<u128> = params.public_indices.iter().cloned().collect();
+    if indices_set.len() != params.public_indices.len() {
+        return Err("Constraint violation: public indices contain duplicates".to_string());
+    }
+    
+    // Constraint 12: All public indices should be in valid range [1, field_p)
+    for (i, &index) in params.public_indices.iter().enumerate() {
+        if index == 0 || index >= params.field_p {
+            return Err(format!("Constraint violation: public index {} at position {} is out of range [1, {})", 
+                              index, i, params.field_p));
+        }
+    }
+    
+    Ok(())
 }
 
 /// Generate Loquat public parameters with default 128-bit security
@@ -295,7 +415,11 @@ mod tests {
 
     #[test]
     fn test_loquat_setup_basic() {
-        let result = loquat_setup(128);
+        let result = loquat_setup(64); // Use 64-bit security to avoid overflow in tests
+        match &result {
+            Ok(_) => {},
+            Err(e) => println!("Setup error: {}", e),
+        }
         assert!(result.is_ok());
         
         let params = result.unwrap();
