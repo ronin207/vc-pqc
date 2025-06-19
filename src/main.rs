@@ -78,7 +78,7 @@ fn demo_security_level(lambda: usize) -> Result<(), String> {
     let signature_size = estimate_signature_size(&signature);
     println!("Complete signature size: {:.1} KB", signature_size as f64 / 1024.0);
     
-    println!("-".repeat(60));
+    println!("{}", "-".repeat(60));
     Ok(())
 }
 
