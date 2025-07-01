@@ -1,8 +1,8 @@
 use std::time::Instant;
-use crate::setup::loquat_setup;
-use crate::keygen::keygen_with_params;
-use crate::sign::loquat_sign;
-use crate::verify::loquat_verify_algorithm_7;
+use super::setup::loquat_setup;
+use super::keygen::keygen_with_params;
+use super::sign::{loquat_sign, LoquatSignature};
+use super::verify::loquat_verify;
 
 /// Hash function type for benchmarking
 #[derive(Debug, Clone, PartialEq)]
@@ -212,7 +212,7 @@ impl LoquatBenchmark {
 
             // Benchmark Verification
             let verification_start = Instant::now();
-            let is_valid = loquat_verify_algorithm_7(
+            let is_valid = loquat_verify(
                 &message,
                 &signature,
                 &keypair.public_key,
@@ -271,40 +271,15 @@ impl LoquatBenchmark {
     }
 
     /// Estimate signature size in bytes
-    fn estimate_signature_size(&self, signature: &crate::sign::LoquatSignature) -> usize {
-        // Estimate based on signature components
+    fn estimate_signature_size(&self, signature: &LoquatSignature) -> usize {
+        // Note: this is a rough estimation. For exact sizing, serialization is needed.
         let mut size = 0;
-        
-        // IOPProof size - using actual fields
-        size += signature.iop_proof.commitment.len() * 32; // ~32 bytes per commitment
-        size += signature.iop_proof.challenges.len() * 16; // ~16 bytes per challenge
-        size += signature.iop_proof.responses.len() * 16; // ~16 bytes per response
-        size += signature.iop_proof.aux_data.len() * 16; // ~16 bytes per aux data
-        size += signature.iop_proof.poly_evaluations.len() * 16; // ~16 bytes per evaluation
-        
-        // Sumcheck proof size - using actual fields
-        size += signature.sumcheck_proof.round_polynomials.len() * 64; // ~64 bytes per polynomial
-        size += signature.sumcheck_proof.evaluation_points.len() * 16; // ~16 bytes per point
-        size += 16; // final_evaluation
-        
-        // LDT folding proof size - using actual fields
-        size += signature.ldt_folding.folded_polynomials.len() * 128; // ~128 bytes per folded poly
-        size += signature.ldt_folding.folding_challenges.len() * 16;
-        size += signature.ldt_folding.merkle_commitments.len() * 32; // ~32 bytes per hash
-        
-        // LDT queries size
-        size += signature.ldt_queries.len() * 32; // ~32 bytes per query
-        
-        // Additional signature components
-        size += signature.message_commitment.len(); // message commitment
-        size += signature.residuosity_symbols.len() * 16; // residuosity symbols
-        size += signature.sumcheck_witness.len() * 16; // sumcheck witness
-        size += signature.sumcheck_masks.len() * 16; // sumcheck masks
-        size += signature.ldt_codeword.len() * 16; // LDT codeword
-        
-        // Metadata size
-        size += 64; // Fixed metadata size
-        
+        size += signature.root_c.len();
+        size += signature.t_values.iter().map(|v| v.len() * 16).sum::<usize>(); // ~16 bytes per F
+        size += signature.o_values.iter().map(|v| v.len() * 16).sum::<usize>();
+        size += signature.pi_us.round_polynomials.iter().map(|p| p.coeffs.len() * 16).sum::<usize>();
+        size += signature.ldt_proof.commitments.len() * 32;
+        size += signature.ldt_proof.openings.iter().map(|o| o.opening_proof.len() * 16).sum::<usize>();
         size
     }
 
@@ -317,16 +292,6 @@ impl LoquatBenchmark {
             64 => 20,   // Map 64-bit to 80-bit paper equivalent
             256 => 32,  // Map 256-bit to 128-bit paper equivalent
             _ => 25,    // Default fallback
-        }
-    }
-
-    /// Estimate query complexity (κ) based on parameters (legacy method)
-    fn estimate_query_complexity(&self, params: &crate::setup::LoquatPublicParams) -> usize {
-        // Query complexity is related to the security level and LDT parameters
-        match params.field_p {
-            p if p < 100000 => 20,      // ~80-bit security
-            p if p < 1000000 => 25,     // ~100-bit security  
-            _ => 32,                    // ~128-bit security
         }
     }
 
@@ -471,4 +436,4 @@ pub fn run_griffin_benchmark() -> Result<(), String> {
     
     println!("\nGriffin benchmark completed.");
     Ok(())
-} 
+}

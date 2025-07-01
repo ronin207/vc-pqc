@@ -1,1 +1,43 @@
 /target
+
+# Rust build artifacts
+target/
+**/target/
+**/*.rlib
+**/*.rmeta
+
+# Large binary files
+*.rlib
+*.so
+*.dll
+*.dylib
+*.a
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+# Logs
+*.log
+
+# Node modules (if any)
+node_modules/
+
+# Rules documentation (per user request)
+rules.mdc
+
+# Anonymous credentials module (per user request)
+src/anoncreds/
+
+# ZKVM target directories with large binaries
+loquat-zkvm/target/
