@@ -237,3 +237,5 @@ src/
 ## License
 
 This implementation is for educational and research purposes, demonstrating all six algorithms from the Loquat paper with complete functionality and SNARK-ready components. 
+
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ronin207/vc-pqc)
