@@ -1,71 +1,66 @@
-//! VC-PQC: Post-Quantum Verifiable Credentials
+//! Research Agent for Cryptography Papers
 //! 
-//! This library provides two main components:
+//! A comprehensive research agent that scrapes cryptography papers from eprint.iacr.org
+//! and builds interconnected knowledge graphs to enable advanced analysis and discovery
+//! of relationships between papers.
 //! 
-//! 1. **Loquat**: A SNARK-friendly post-quantum signature scheme based on the Legendre PRF
-//! 2. **Anonymous Credentials**: Privacy-preserving verifiable credentials built on Loquat
+//! ## Features
 //! 
-//! ## Core Loquat Signature Scheme
+//! - **Paper Scraping**: Intelligent scraping from IACR eprint archive
+//! - **Knowledge Graphs**: Individual and interconnected knowledge graphs for papers
+//! - **NLP Processing**: Entity extraction and relationship detection
+//! - **Paper Analysis**: Innovation scoring, complexity assessment, and influence prediction
+//! - **Semantic Search**: Query papers using natural language
 //! 
-//! The `loquat` module implements the complete Loquat signature scheme from the paper
-//! "Loquat: A SNARK-Friendly Post-Quantum Signature based on the Legendre PRF".
+//! ## Quick Start
 //! 
-//! ```rust
-//! use vc_pqc::{loquat_setup, keygen_with_params, loquat_sign, loquat_verify};
-//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! ```rust,no_run
+//! use research_agent::{Database, EprintScraper, KnowledgeGraphBuilder};
 //! 
-//! // Setup with 128-bit security
-//! let params = loquat_setup(128)?;
-//! let keypair = keygen_with_params(&params)?;
-//! 
-//! // Sign and verify
-//! let message = b"Hello, post-quantum world!";
-//! let signature = loquat_sign(message, &keypair, &params)?;
-//! let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params)?;
-//! assert!(is_valid);
-//! # Ok(())
-//! # }
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     // Initialize database
+//!     let db = Database::new("research.db").await?;
+//!     db.initialize().await?;
+//!     
+//!     // Scrape papers
+//!     let scraper = EprintScraper::new();
+//!     scraper.scrape_papers(10, 2024, None, &db).await?;
+//!     
+//!     // Build knowledge graphs
+//!     let builder = KnowledgeGraphBuilder::new(&db);
+//!     builder.build_incremental_graphs().await?;
+//!     
+//!     // Query the graph
+//!     let results = builder.query_graph("zero knowledge", 5).await?;
+//!     for result in results {
+//!         println!("{}: {:.3}", result.title, result.relevance_score);
+//!     }
+//!     
+//!     Ok(())
+//! }
 //! ```
 //! 
-//! ## Anonymous Credentials
+//! ## Modules
 //! 
-//! The `anoncreds` module provides W3C Verifiable Credentials compatible anonymous
-//! credentials with selective disclosure and zero-knowledge proofs.
-//! 
-//! ```rust,ignore
-//! use vc_pqc::anoncreds::{CredentialIssuer, CredentialAttribute};
-//! use vc_pqc::loquat::loquat_setup;
-//! 
-//! // Setup issuer
-//! let params = loquat_setup(128)?;
-//! let mut issuer = CredentialIssuer::new("Government_ID", &params)?;
-//! 
-//! // Issue credential
-//! let attributes = vec![
-//!     CredentialAttribute::new("age", 25, false), // Hidden
-//!     CredentialAttribute::new("citizenship", 840, false), // Hidden (USA)
-//! ];
-//! let credential = issuer.issue_credential(
-//!     b"holder_pseudonym".to_vec(),
-//!     attributes,
-//!     "identity_v1"
-//! )?;
-//! ```
+//! - [`scraper`]: Web scraping from eprint.iacr.org
+//! - [`database`]: SQLite database operations and schema
+//! - [`nlp`]: Natural language processing and entity extraction
+//! - [`knowledge_graph`]: Knowledge graph construction and analysis
+//! - [`embeddings`]: Semantic similarity and clustering
+//! - [`paper_analyzer`]: High-level paper analysis and insights
 
-pub mod loquat;
-// pub mod anoncreds;
+pub mod scraper;
+pub mod database;
+pub mod nlp;
+pub mod knowledge_graph;
+pub mod embeddings;
+pub mod paper_analyzer;
 
-// Re-export commonly used types for convenience
-pub use loquat::{
-    LoquatError, LoquatResult, LoquatPublicParams, LoquatSignature,
-    loquat_setup, loquat_sign, loquat_verify
-};
-
-pub use loquat::keygen::{LoquatKeyPair, keygen_with_params};
-
-/*
-pub use anoncreds::{
-    CredentialIssuer, CredentialAttribute, AnonymousCredential, 
-    SelectiveDisclosureRequest, SelectiveDisclosureVerifier
-};
-*/
+// Re-export commonly used types
+pub use scraper::{Paper, EprintScraper};
+pub use database::{Database, Entity, Relationship, PaperConnection};
+pub use knowledge_graph::{KnowledgeGraph, KnowledgeGraphBuilder, QueryResult, ConnectionAnalysis};
+pub use nlp::NLPProcessor;
+pub use embeddings::EmbeddingGenerator;
+pub use paper_analyzer::{PaperAnalyzer, PaperAnalysis};

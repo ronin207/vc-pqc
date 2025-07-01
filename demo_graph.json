@@ -1,0 +1,163 @@
+{
+  "paper_id": "2024/001",
+  "nodes": [
+    {
+      "id": 0,
+      "entity_id": 25,
+      "node_type": "cryptographic_algorithm",
+      "label": "lattice",
+      "properties": {
+        "type": "cryptographic_algorithm",
+        "context": "re against quantum adversaries. our approach uses lattice-based cryptography and provides succinct proofs w"
+      },
+      "confidence": 0.9
+    },
+    {
+      "id": 1,
+      "entity_id": 26,
+      "node_type": "mathematical_concept",
+      "label": "zero-knowledge",
+      "properties": {
+        "type": "mathematical_concept",
+        "context": "novel zero-knowledge proof systems for post-quantum cryptography we pr"
+      },
+      "confidence": 0.8
+    },
+    {
+      "id": 2,
+      "entity_id": 27,
+      "node_type": "mathematical_concept",
+      "label": "proof",
+      "properties": {
+        "type": "mathematical_concept",
+        "context": "novel zero-knowledge proof systems for post-quantum cryptography we present "
+      },
+      "confidence": 0.8
+    },
+    {
+      "id": 3,
+      "entity_id": 28,
+      "node_type": "mathematical_concept",
+      "label": "security",
+      "properties": {
+        "type": "mathematical_concept",
+        "context": "hy and provides succinct proofs with post-quantum security guarantees. we demonstrate applications to blockc"
+      },
+      "confidence": 0.8
+    },
+    {
+      "id": 4,
+      "entity_id": 29,
+      "node_type": "security_property",
+      "label": "post-quantum",
+      "properties": {
+        "context": "novel zero-knowledge proof systems for post-quantum cryptography we present novel zero-knowledge proo",
+        "type": "security_property"
+      },
+      "confidence": 0.85
+    },
+    {
+      "id": 5,
+      "entity_id": 30,
+      "node_type": "security_property",
+      "label": "quantum",
+      "properties": {
+        "type": "security_property",
+        "context": "o-knowledge proof systems that are secure against quantum adversaries. our approach uses lattice-based cryp"
+      },
+      "confidence": 0.85
+    },
+    {
+      "id": 6,
+      "entity_id": 31,
+      "node_type": "author",
+      "label": "Alice Cryptographer",
+      "properties": {
+        "type": "author"
+      },
+      "confidence": 1.0
+    },
+    {
+      "id": 7,
+      "entity_id": 32,
+      "node_type": "author",
+      "label": "Bob Prover",
+      "properties": {
+        "type": "author"
+      },
+      "confidence": 1.0
+    },
+    {
+      "id": 8,
+      "entity_id": 33,
+      "node_type": "keyword",
+      "label": "zero-knowledge",
+      "properties": {
+        "type": "keyword"
+      },
+      "confidence": 0.7
+    },
+    {
+      "id": 9,
+      "entity_id": 34,
+      "node_type": "keyword",
+      "label": "lattice",
+      "properties": {
+        "type": "keyword"
+      },
+      "confidence": 0.7
+    },
+    {
+      "id": 10,
+      "entity_id": 35,
+      "node_type": "keyword",
+      "label": "post-quantum",
+      "properties": {
+        "type": "keyword"
+      },
+      "confidence": 0.7
+    },
+    {
+      "id": 11,
+      "entity_id": 36,
+      "node_type": "keyword",
+      "label": "blockchain",
+      "properties": {
+        "type": "keyword"
+      },
+      "confidence": 0.7
+    },
+    {
+      "id": 12,
+      "entity_id": 37,
+      "node_type": "category",
+      "label": "Zero-Knowledge",
+      "properties": {
+        "type": "category"
+      },
+      "confidence": 1.0
+    },
+    {
+      "id": 13,
+      "entity_id": 38,
+      "node_type": "category",
+      "label": "Post-Quantum",
+      "properties": {
+        "type": "category"
+      },
+      "confidence": 1.0
+    }
+  ],
+  "edges": [],
+  "metadata": {
+    "created_at": "2025-07-01T17:31:24.453292477+00:00",
+    "last_updated": "2025-07-01T17:31:24.453300431+00:00",
+    "node_count": 14,
+    "edge_count": 0,
+    "paper_title": "Novel Zero-Knowledge Proof Systems for Post-Quantum Cryptography",
+    "paper_authors": [
+      "Alice Cryptographer",
+      "Bob Prover"
+    ]
+  }
+}
