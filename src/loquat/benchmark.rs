@@ -63,8 +63,8 @@ impl LoquatBenchmark {
     pub fn new() -> Self {
         Self {
             configs: vec![
-                BenchmarkConfig { security_level: 64, num_iterations: 10, message_size: 32, hash_type: HashType::ShaSHAKE },
                 BenchmarkConfig { security_level: 128, num_iterations: 10, message_size: 32, hash_type: HashType::ShaSHAKE },
+                BenchmarkConfig { security_level: 192, num_iterations: 10, message_size: 32, hash_type: HashType::ShaSHAKE },
                 BenchmarkConfig { security_level: 256, num_iterations: 10, message_size: 32, hash_type: HashType::ShaSHAKE },
             ],
         }
@@ -75,13 +75,13 @@ impl LoquatBenchmark {
         Self {
             configs: vec![
                 // SHA/SHAKE variants
-                BenchmarkConfig { security_level: 80, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
                 BenchmarkConfig { security_level: 100, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
                 BenchmarkConfig { security_level: 128, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
+                BenchmarkConfig { security_level: 192, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
                 // Griffin variants
-                BenchmarkConfig { security_level: 80, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
                 BenchmarkConfig { security_level: 100, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
                 BenchmarkConfig { security_level: 128, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
+                BenchmarkConfig { security_level: 192, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
             ],
         }
     }
@@ -90,9 +90,9 @@ impl LoquatBenchmark {
     pub fn sha_config() -> Self {
         Self {
             configs: vec![
-                BenchmarkConfig { security_level: 80, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
                 BenchmarkConfig { security_level: 100, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
                 BenchmarkConfig { security_level: 128, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
+                BenchmarkConfig { security_level: 192, num_iterations: 20, message_size: 32, hash_type: HashType::ShaSHAKE },
             ],
         }
     }
@@ -101,9 +101,9 @@ impl LoquatBenchmark {
     pub fn griffin_config() -> Self {
         Self {
             configs: vec![
-                BenchmarkConfig { security_level: 80, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
                 BenchmarkConfig { security_level: 100, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
                 BenchmarkConfig { security_level: 128, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
+                BenchmarkConfig { security_level: 192, num_iterations: 20, message_size: 32, hash_type: HashType::Griffin },
             ],
         }
     }
@@ -159,9 +159,10 @@ impl LoquatBenchmark {
             // Benchmark Setup - map security levels to implementation parameters
             let setup_start = Instant::now();
             let impl_security_level = match config.security_level {
-                80 => 64,   // Map LOQUAT-80 to 64-bit implementation
                 100 => 128, // Map LOQUAT-100 to 128-bit implementation  
                 128 => 256, // Map LOQUAT-128 to 256-bit implementation
+                192 => 192, // Direct mapping for 192-bit implementation
+                256 => 256, // Direct mapping for 256-bit implementation
                 _ => config.security_level as usize, // Direct mapping for others
             };
             let params = loquat_setup(impl_security_level)
@@ -286,12 +287,11 @@ impl LoquatBenchmark {
     /// Estimate query complexity (κ) based on security level from paper
     fn estimate_query_complexity_by_security_level(&self, security_level: u32) -> usize {
         match security_level {
-            80 => 20,   // LOQUAT-80: κ = 20
-            100 => 25,  // LOQUAT-100: κ = 25
-            128 => 32,  // LOQUAT-128: κ = 32
-            64 => 20,   // Map 64-bit to 80-bit paper equivalent
-            256 => 32,  // Map 256-bit to 128-bit paper equivalent
-            _ => 25,    // Default fallback
+            100 => 25,  // LOQUAT-100: κ = 25 (maps to 128-bit impl)
+            128 => 32,  // LOQUAT-128: κ = 32 (maps to 256-bit impl)
+            192 => 38,  // LOQUAT-192: κ = 38 (estimated for 192-bit)
+            256 => 32,  // LOQUAT-256: κ = 32 (direct mapping)
+            _ => 30,    // Default fallback
         }
     }
 
