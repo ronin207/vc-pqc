@@ -12,7 +12,7 @@ mod integration_tests {
     use crate::loquat::setup::loquat_setup;
     use crate::loquat::sign::loquat_sign;
     use crate::loquat::verify::loquat_verify;
-    use ark_ff::{One, Zero};
+    use ark_ff::{One, Zero, UniformRand};
 
     /// Test complete signature generation and verification flow
     #[test]
@@ -109,5 +109,76 @@ mod integration_tests {
         let result1 = legendre_prf_secure(test_val);
         let result2 = legendre_prf_secure(test_val);
         assert_eq!(result1, result2, "Legendre PRF should be deterministic");
+    }
+
+    #[test]
+    fn test_empty_message_signature() {
+        let params = loquat_setup(128).expect("Setup should succeed");
+        let keypair = keygen_with_params(&params).expect("Key generation should succeed");
+        let message = b"";
+
+        let signature = loquat_sign(message, &keypair, &params).expect("Signing an empty message should succeed");
+        let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
+        assert!(is_valid, "Signature for empty message should be valid");
+    }
+
+    #[test]
+    fn test_large_message_signature() {
+        let params = loquat_setup(128).expect("Setup should succeed");
+        let keypair = keygen_with_params(&params).expect("Key generation should succeed");
+        let message = vec![0u8; 10 * 1024]; // 10 KB message
+
+        let signature = loquat_sign(&message, &keypair, &params).expect("Signing a large message should succeed");
+        let is_valid = loquat_verify(&message, &signature, &keypair.public_key, &params).expect("Verification should complete");
+        assert!(is_valid, "Signature for large message should be valid");
+    }
+
+    #[test]
+    fn test_tampered_signature_components() {
+        let params = loquat_setup(128).expect("Setup should succeed");
+        let keypair = keygen_with_params(&params).expect("Key generation should succeed");
+        let message = b"Tampering test";
+        let mut signature = loquat_sign(message, &keypair, &params).expect("Signature generation should succeed");
+
+        // Tamper with Merkle root
+        signature.root_c[0] ^= 1;
+        let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
+        assert!(!is_valid, "Signature with tampered Merkle root should be invalid");
+        signature.root_c[0] ^= 1; // Restore
+
+        // Tamper with sumcheck proof
+        signature.pi_us.claimed_sum += F::one();
+        let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
+        assert!(!is_valid, "Signature with tampered sumcheck proof should be invalid");
+    }
+
+    #[test]
+    fn test_invalid_setup_parameters() {
+        assert!(loquat_setup(100).is_err(), "Setup should fail for unsupported security level");
+    }
+
+    #[test]
+    fn test_public_key_mismatch() {
+        let params = loquat_setup(128).expect("Setup should succeed");
+        let keypair1 = keygen_with_params(&params).expect("Keygen should succeed");
+        let keypair2 = keygen_with_params(&params).expect("Keygen should succeed");
+        let message = b"Public key mismatch test";
+
+        let signature = loquat_sign(message, &keypair1, &params).expect("Signing should succeed");
+        let is_valid = loquat_verify(message, &signature, &keypair2.public_key, &params).expect("Verification should complete");
+        assert!(!is_valid, "Verification should fail with a different public key");
+    }
+
+    #[test]
+    fn test_different_security_levels() {
+        for &lambda in &[128, 192, 256] {
+            let params = loquat_setup(lambda).expect(&format!("Setup for {}-bit failed", lambda));
+            let keypair = keygen_with_params(&params).expect(&format!("Keygen for {}-bit failed", lambda));
+            let message = format!("Test message for {}-bit security", lambda).into_bytes();
+
+            let signature = loquat_sign(&message, &keypair, &params).expect(&format!("Signing for {}-bit failed", lambda));
+            let is_valid = loquat_verify(&message, &signature, &keypair.public_key, &params).expect(&format!("Verification for {}-bit failed", lambda));
+            assert!(is_valid, "Signature should be valid for {}-bit security level", lambda);
+        }
     }
 }
