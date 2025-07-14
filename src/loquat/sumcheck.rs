@@ -1,30 +1,40 @@
 use crate::loquat::errors::{LoquatError, LoquatResult};
-use crate::loquat::field_utils::{F};
-use crate::loquat::ark_serde;
-use ark_poly::{univariate::DensePolynomial, Polynomial, DenseUVPolynomial};
-use ark_ff::{PrimeField, Zero, One};
+use crate::loquat::field_utils::{F, F2};
 use merlin::Transcript;
 use serde::{Deserialize, Serialize};
-use ark_serialize::CanonicalSerialize;
+
+/// Represents a simple linear polynomial, g(X) = c0 + c1*X.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinearPolynomial {
+    pub c0: F2,
+    pub c1: F2,
+}
+
+impl LinearPolynomial {
+    pub fn new(c0: F2, c1: F2) -> Self {
+        Self { c0, c1 }
+    }
+
+    pub fn evaluate(&self, point: &F2) -> F2 {
+        self.c0 + self.c1 * *point
+    }
+}
 
 /// Univariate Sumcheck proof structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnivariateSumcheckProof {
     /// Round polynomials g_1(X), ..., g_v(X) for v variables
-    #[serde(with = "ark_serde::vec")]
-    pub round_polynomials: Vec<DensePolynomial<F>>,
+    pub round_polynomials: Vec<LinearPolynomial>,
     /// Final evaluation P(r_1, ..., r_v)
-    #[serde(with = "ark_serde")]
-    pub final_evaluation: F,
+    pub final_evaluation: F2,
     /// Claimed sum over the hypercube
-    #[serde(with = "ark_serde")]
-    pub claimed_sum: F,
+    pub claimed_sum: F2,
 }
 
 /// Generate sumcheck proof for multilinear polynomial
 pub fn generate_sumcheck_proof(
-    polynomial_evals: &[F],
-    claimed_sum: F,
+    polynomial_evals: &[F2],
+    claimed_sum: F2,
     num_variables: usize,
     transcript: &mut Transcript,
 ) -> LoquatResult<UnivariateSumcheckProof> {
@@ -37,7 +47,7 @@ pub fn generate_sumcheck_proof(
     if polynomial_evals.len() != (1 << num_variables) {
         return Err(LoquatError::SumcheckError {
             step: "proof_generation".to_string(),
-            details: format!("Polynomial evaluations length {} doesn't match 2^{}", polynomial_evals.len(), num_variables)
+            details: format!("Polynomial evaluations length {} doesn't match 2^{\n}", polynomial_evals.len(), num_variables)
         });
     }
 
@@ -45,7 +55,7 @@ pub fn generate_sumcheck_proof(
     let mut challenges = Vec::new();
     let mut current_evals = polynomial_evals.to_vec();
     
-    let computed_sum: F = polynomial_evals.iter().sum();
+    let computed_sum: F2 = polynomial_evals.iter().sum();
     println!("Computed sum from polynomial_evals: {:?}", computed_sum);
     
     if computed_sum != claimed_sum {
@@ -54,9 +64,7 @@ pub fn generate_sumcheck_proof(
         println!("  Claimed:  {:?}", claimed_sum);
     }
     
-    let mut sum_bytes = Vec::new();
-    claimed_sum.serialize_compressed(&mut sum_bytes).unwrap();
-    transcript.append_message(b"claimed_sum", &sum_bytes);
+    transcript.append_message(b"claimed_sum", &bincode::serialize(&claimed_sum).unwrap());
 
     for round_idx in 0..num_variables {
         println!("\n  Prover Round {}: ", round_idx);
@@ -66,13 +74,13 @@ pub fn generate_sumcheck_proof(
         // For a multilinear polynomial, the round polynomial g_j is linear.
         // We only need to evaluate it at 2 points (0 and 1) to determine it.
         for eval_point in 0..2 {
-            let mut partial_sum = F::zero();
+            let mut partial_sum = F2::zero();
             for i in 0..current_evals.len() / 2 {
                 let val_0 = current_evals[2 * i];
                 let val_1 = current_evals[2 * i + 1];
                 // Evaluate g_j(eval_point)
-                let interpolated = val_0 + (val_1 - val_0) * F::from(eval_point as u64);
-                partial_sum += interpolated;
+                let interpolated = val_0 + (val_1 - val_0) * F2::new(F::new(eval_point), F::zero());
+                partial_sum = partial_sum + interpolated;
             }
             round_poly_evals.push(partial_sum);
         }
@@ -82,13 +90,12 @@ pub fn generate_sumcheck_proof(
         println!("    g_{}(0) + g_{}(1): {:?}", round_idx, round_idx, round_poly_evals[0] + round_poly_evals[1]);
         
         // Construct the linear polynomial g(X) = c0 + c1*X from g(0) and g(1).
-        // c0 = g(0), c1 = g(1) - g(0).
-        let round_poly = DensePolynomial::from_coefficients_vec(vec![round_poly_evals[0], round_poly_evals[1] - round_poly_evals[0]]);
-        println!("    Polynomial degree: {}", round_poly.degree());
+        let c0 = round_poly_evals[0];
+        let c1 = round_poly_evals[1] - c0;
+        let round_poly = LinearPolynomial::new(c0, c1);
+
         round_polynomials.push(round_poly.clone());
-        let mut poly_bytes = Vec::new();
-        round_poly.serialize_compressed(&mut poly_bytes).unwrap();
-        transcript.append_message(b"round_poly", &poly_bytes);
+        transcript.append_message(b"round_poly", &bincode::serialize(&round_poly).unwrap());
 
         let challenge = transcript_challenge(transcript);
         println!("    Challenge: {:?}", challenge);
@@ -134,9 +141,7 @@ pub fn verify_sumcheck_proof(
         return Ok(false);
     }
 
-    let mut sum_bytes = Vec::new();
-    proof.claimed_sum.serialize_compressed(&mut sum_bytes).unwrap();
-    transcript.append_message(b"claimed_sum", &sum_bytes);
+    transcript.append_message(b"claimed_sum", &bincode::serialize(&proof.claimed_sum).unwrap());
     println!("✓ Claimed sum added to transcript");
 
     let mut last_sum = proof.claimed_sum;
@@ -144,11 +149,10 @@ pub fn verify_sumcheck_proof(
 
     for (round_index, round_poly) in proof.round_polynomials.iter().enumerate() {
         println!("\n  Round {}: ", round_index);
-        println!("    Polynomial degree: {}", round_poly.degree());
         
         // Verify sum constraint: p(0) + p(1) should equal last_sum
-        let p_0 = round_poly.evaluate(&F::zero());
-        let p_1 = round_poly.evaluate(&F::one());
+        let p_0 = round_poly.evaluate(&F2::zero());
+        let p_1 = round_poly.evaluate(&F2::one());
         let current_sum = p_0 + p_1;
         
         println!("    p(0): {:?}", p_0);
@@ -166,9 +170,7 @@ pub fn verify_sumcheck_proof(
         println!("    ✓ Sum constraint satisfied: p(0) + p(1) = last_sum");
 
         // Add polynomial to transcript and get challenge
-        let mut poly_bytes = Vec::new();
-        round_poly.serialize_compressed(&mut poly_bytes).unwrap();
-        transcript.append_message(b"round_poly", &poly_bytes);
+        transcript.append_message(b"round_poly", &bincode::serialize(round_poly).unwrap());
         
         let challenge = transcript_challenge(transcript);
         println!("    Challenge: {:?}", challenge);
@@ -196,10 +198,13 @@ pub fn verify_sumcheck_proof(
     Ok(true)
 }
 
-fn transcript_challenge(transcript: &mut Transcript) -> F {
+fn transcript_challenge(transcript: &mut Transcript) -> F2 {
     let mut buf = [0u8; 32];
     transcript.challenge_bytes(b"challenge", &mut buf);
-    F::from_le_bytes_mod_order(&buf)
+    // For simplicity, we'll create an F2 element from two F elements derived from the hash.
+    let c0 = F::new(u128::from_le_bytes(buf[..16].try_into().unwrap()));
+    let c1 = F::new(u128::from_le_bytes(buf[16..].try_into().unwrap()));
+    F2::new(c0, c1)
 }
 
 #[cfg(test)]
@@ -210,15 +215,21 @@ mod tests {
     #[test]
     fn test_sumcheck_protocol() {
         let num_variables = 2;
-        let polynomial_evals = vec![F::from(1u64), F::from(2u64), F::from(3u64), F::from(4u64)];
+        let polynomial_evals = vec![
+            F2::new(F::new(1), F::zero()), 
+            F2::new(F::new(2), F::zero()), 
+            F2::new(F::new(3), F::zero()), 
+            F2::new(F::new(4), F::zero()),
+        ];
+        let claimed_sum = F2::new(F::new(10), F::zero());
         
         let mut prover_transcript = Transcript::new(b"test_sumcheck");
-        let proof = generate_sumcheck_proof(&polynomial_evals, F::from(10u64), num_variables, &mut prover_transcript).unwrap();
+        let proof = generate_sumcheck_proof(&polynomial_evals, claimed_sum, num_variables, &mut prover_transcript).unwrap();
         
         let mut verifier_transcript = Transcript::new(b"test_sumcheck");
         let is_valid = verify_sumcheck_proof(&proof, num_variables, &mut verifier_transcript).unwrap();
 
         assert!(is_valid, "Sumcheck proof should verify");
-        assert_eq!(proof.claimed_sum, F::from(10u64));
+        assert_eq!(proof.claimed_sum, claimed_sum);
     }
 }
