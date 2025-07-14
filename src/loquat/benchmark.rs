@@ -147,39 +147,23 @@ impl LoquatBenchmark {
         // Generate test message
         let message = self.generate_test_message(config.message_size);
 
-        // Store params to use for query complexity estimation
-        let mut sample_params = None;
-
         for iteration in 1..=config.num_iterations {
             if iteration % 5 == 0 || iteration == 1 {
                 print!("  Iteration {}/{} ", iteration, config.num_iterations);
                 std::io::Write::flush(&mut std::io::stdout()).unwrap();
             }
 
-            // Benchmark Setup - map security levels to implementation parameters
+            // Benchmark Setup
             let setup_start = Instant::now();
-            let impl_security_level = match config.security_level {
-                100 => 128, // Map LOQUAT-100 to 128-bit implementation  
-                128 => 256, // Map LOQUAT-128 to 256-bit implementation
-                192 => 192, // Direct mapping for 192-bit implementation
-                256 => 256, // Direct mapping for 256-bit implementation
-                _ => config.security_level as usize, // Direct mapping for others
-            };
-            let params = loquat_setup(impl_security_level)
+            let params = loquat_setup(config.security_level as usize)
                 .map_err(|e| format!("Setup failed: {}", e))?;
             let mut setup_time = setup_start.elapsed();
             
-            // Apply Griffin hash overhead to setup
             if config.hash_type == HashType::Griffin {
                 setup_time = self.apply_griffin_overhead(setup_time, "setup");
             }
             
             setup_times.push(setup_time.as_secs_f64() * 1000.0);
-
-            // Store params for later use
-            if sample_params.is_none() {
-                sample_params = Some(params.clone());
-            }
 
             // Benchmark Key Generation
             let keygen_start = Instant::now();
@@ -187,7 +171,6 @@ impl LoquatBenchmark {
                 .map_err(|e| format!("Keygen failed: {}", e))?;
             let mut keygen_time = keygen_start.elapsed();
             
-            // Apply Griffin hash overhead to keygen
             if config.hash_type == HashType::Griffin {
                 keygen_time = self.apply_griffin_overhead(keygen_time, "keygen");
             }
@@ -200,7 +183,6 @@ impl LoquatBenchmark {
                 .map_err(|e| format!("Signing failed: {}", e))?;
             let mut signing_time = signing_start.elapsed();
             
-            // Apply Griffin hash overhead to signing (significant impact)
             if config.hash_type == HashType::Griffin {
                 signing_time = self.apply_griffin_overhead(signing_time, "signing");
             }
@@ -208,7 +190,7 @@ impl LoquatBenchmark {
             signing_times.push(signing_time.as_secs_f64() * 1000.0);
 
             // Measure signature size
-            let signature_size = self.estimate_signature_size(&signature);
+            let signature_size = bincode::serialize(&signature).unwrap().len();
             signature_sizes.push(signature_size as f64);
 
             // Benchmark Verification
@@ -221,7 +203,6 @@ impl LoquatBenchmark {
             ).map_err(|e| format!("Verification failed: {}", e))?;
             let mut verification_time = verification_start.elapsed();
             
-            // Apply Griffin hash overhead to verification (significant impact)
             if config.hash_type == HashType::Griffin {
                 verification_time = self.apply_griffin_overhead(verification_time, "verification");
             }
@@ -251,14 +232,12 @@ impl LoquatBenchmark {
         })
     }
 
-    /// Apply Griffin hash overhead based on operation type
-    /// Griffin is slower than SHA but more SNARK-friendly
     fn apply_griffin_overhead(&self, base_time: std::time::Duration, operation: &str) -> std::time::Duration {
         let multiplier = match operation {
-            "setup" => 1.2,        // 20% overhead for setup
-            "keygen" => 1.1,       // 10% overhead for keygen
-            "signing" => 20.0,     // ~20x overhead for signing (major hash usage)
-            "verification" => 45.0, // ~45x overhead for verification (paper shows 7.40s vs 0.16s)
+            "setup" => 1.2,
+            "keygen" => 1.1,
+            "signing" => 20.0,
+            "verification" => 45.0,
             _ => 1.0,
         };
         
@@ -266,36 +245,20 @@ impl LoquatBenchmark {
         std::time::Duration::from_nanos(nanos as u64)
     }
 
-    /// Generate test message of specified size
     fn generate_test_message(&self, size: usize) -> Vec<u8> {
         (0..size).map(|i| (i % 256) as u8).collect()
     }
 
-    /// Estimate signature size in bytes
-    fn estimate_signature_size(&self, signature: &LoquatSignature) -> usize {
-        // Note: this is a rough estimation. For exact sizing, serialization is needed.
-        let mut size = 0;
-        size += signature.root_c.len();
-        size += signature.t_values.iter().map(|v| v.len() * 16).sum::<usize>(); // ~16 bytes per F
-        size += signature.o_values.iter().map(|v| v.len() * 16).sum::<usize>();
-        size += signature.pi_us.round_polynomials.iter().map(|p| p.coeffs.len() * 16).sum::<usize>();
-        size += signature.ldt_proof.commitments.len() * 32;
-        size += signature.ldt_proof.openings.iter().map(|o| o.opening_proof.len() * 16).sum::<usize>();
-        size
-    }
-
-    /// Estimate query complexity (κ) based on security level from paper
     fn estimate_query_complexity_by_security_level(&self, security_level: u32) -> usize {
         match security_level {
-            100 => 25,  // LOQUAT-100: κ = 25 (maps to 128-bit impl)
-            128 => 32,  // LOQUAT-128: κ = 32 (maps to 256-bit impl)
-            192 => 38,  // LOQUAT-192: κ = 38 (estimated for 192-bit)
-            256 => 32,  // LOQUAT-256: κ = 32 (direct mapping)
-            _ => 30,    // Default fallback
+            100 => 25,
+            128 => 32,
+            192 => 38,
+            256 => 32,
+            _ => 30,
         }
     }
 
-    /// Calculate average of a vector of values
     fn average(&self, values: &[f64]) -> f64 {
         if values.is_empty() {
             0.0
@@ -304,7 +267,6 @@ impl LoquatBenchmark {
         }
     }
 
-    /// Print performance metrics for a single security level
     fn print_metrics(&self, metrics: &PerformanceMetrics) {
         println!("Results:");
         println!("  Security Level:     LOQUAT-{}", metrics.security_level);
@@ -317,7 +279,6 @@ impl LoquatBenchmark {
         println!("  KeyGen Time:        {:.2} ms", metrics.keygen_time_ms);
     }
 
-    /// Print summary table comparing all security levels
     fn print_summary(&self, results: &[PerformanceMetrics]) {
         if results.is_empty() {
             return;
@@ -349,7 +310,6 @@ impl LoquatBenchmark {
         println!("  - All times are averages over multiple iterations.");
     }
 
-    /// Export results to CSV format
     pub fn export_csv(&self, results: &[PerformanceMetrics], filename: &str) -> Result<(), std::io::Error> {
         use std::fs::File;
         use std::io::Write;
@@ -374,7 +334,6 @@ impl LoquatBenchmark {
         Ok(())
     }
 
-    /// Run a quick performance test for demonstration
     pub fn quick_test() -> Result<(), String> {
         println!("Running Quick Loquat Performance Test...\n");
         

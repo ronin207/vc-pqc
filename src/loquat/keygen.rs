@@ -1,16 +1,13 @@
 use super::errors::{LoquatError, LoquatResult};
 use super::field_utils::{legendre_prf_secure, F};
 use super::setup::LoquatPublicParams;
-use ark_ff::{UniformRand, Zero};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Loquat key pair, holding secret and public keys in the prime field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoquatKeyPair {
-    #[serde(with = "super::ark_serde")]
     pub secret_key: F,
-    #[serde(with = "super::ark_serde::vec")]
     pub public_key: Vec<F>,
 }
 
@@ -98,7 +95,7 @@ pub fn keygen_with_params(params: &LoquatPublicParams) -> LoquatResult<LoquatKey
     println!("  Legendre PRF output distribution:");
     for (value, count) in legendre_stats.iter() {
         let percentage = (*count as f64 / params.l as f64) * 100.0;
-        println!("    Value {}: {} occurrences ({:.1}%)", value, count, percentage);
+        println!("    Value {:?}: {} occurrences ({:.1}%)", value, count, percentage);
     }
     
     // Verify the Legendre PRF constraint

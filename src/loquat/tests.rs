@@ -12,7 +12,7 @@ mod integration_tests {
     use crate::loquat::setup::loquat_setup;
     use crate::loquat::sign::loquat_sign;
     use crate::loquat::verify::loquat_verify;
-    use ark_ff::{One, Zero, UniformRand};
+    use crate::loquat::field_p127::{Fp127, Fp2}; // Import the new field types
 
     /// Test complete signature generation and verification flow
     #[test]
@@ -78,12 +78,12 @@ mod integration_tests {
 
         // Tamper with residuosity symbols
         if !signature.o_values.is_empty() && !signature.o_values[0].is_empty() {
-            signature.o_values[0][0] += F::one();
+            signature.o_values[0][0] = signature.o_values[0][0] + F::one();
             let is_valid =
                 loquat_verify(message, &signature, &keypair.public_key, &params)
                     .expect("Verification should complete");
             assert!(!is_valid, "Tampered residuosity symbols should be rejected");
-            signature.o_values[0][0] -= F::one(); // Restore
+            signature.o_values[0][0] = signature.o_values[0][0] - F::one(); // Restore
         }
     }
 
@@ -147,7 +147,7 @@ mod integration_tests {
         signature.root_c[0] ^= 1; // Restore
 
         // Tamper with sumcheck proof
-        signature.pi_us.claimed_sum += F::one();
+        signature.pi_us.claimed_sum = signature.pi_us.claimed_sum + Fp2::one();
         let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
         assert!(!is_valid, "Signature with tampered sumcheck proof should be invalid");
     }

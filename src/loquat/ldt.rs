@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use super::field_utils::F;
+use super::field_utils::{F, F2};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LDTProof {
@@ -10,9 +10,7 @@ pub struct LDTProof {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LDTOpening {
     pub position: usize,
-    #[serde(with = "super::ark_serde")]
-    pub codeword_eval: F,
-    #[serde(with = "super::ark_serde::vec")]
-    pub opening_proof: Vec<F>,
+    pub codeword_eval: F2,
+    pub opening_proof: Vec<F2>,
     pub auth_path: Vec<Vec<u8>>,
 }
