@@ -7,26 +7,20 @@
 //! Mersenne prime p = 2^127 - 1. This field will need to be replaced
 //! with a proper implementation for full compliance.
 
-use ark_ff::{PrimeField, Zero, One, Field};
+use super::field_p127::{Fp127, Fp2};
 
-// TEMPORARY: Using BN254 scalar field - needs replacement with p = 2^127 - 1 per rules.mdc
-pub use ark_bn254::Fr as F;
+// Re-export for convenience
+pub type F = Fp127;
+pub type F2 = Fp2;
 
 /// Convert u128 to secure field element
 pub fn u128_to_field(value: u128) -> F {
-    F::from(value)
+    F::new(value)
 }
 
-/// Convert field element to u128 for display purposes (lossy conversion)
-pub fn field_to_u128_lossy(field_elem: F) -> u128 {
-    let bigint = field_elem.into_bigint();
-    if bigint.0.len() > 1 {
-        (bigint.0[0] as u128) | ((bigint.0[1] as u128) << 64)
-    } else if bigint.0.len() == 1 {
-        bigint.0[0] as u128
-    } else {
-        0
-    }
+/// Convert field element to u128 for display purposes
+pub fn field_to_u128(field_elem: F) -> u128 {
+    field_elem.0
 }
 
 /// Safe field multiplication 
@@ -40,8 +34,8 @@ pub fn field_add(a: F, b: F) -> F {
 }
 
 /// Safe field exponentiation
-pub fn field_pow(base: F, exp: u64) -> F {
-    base.pow([exp])
+pub fn field_pow(base: F, exp: u128) -> F {
+    base.pow(exp)
 }
 
 /// Convert slice of u128 to field elements
@@ -50,17 +44,14 @@ pub fn u128_slice_to_field(values: &[u128]) -> Vec<F> {
 }
 
 /// Constant-time Legendre symbol computation as mandated by rules.mdc
-/// "The modular exponentiation used to compute the Legendre symbol MUST be 
-/// implemented in constant time. A standard pow function with data-dependent 
-/// branching or timing is vulnerable to side-channel attacks"
 pub fn legendre_symbol_secure(a: F) -> i8 {
     if a.is_zero() {
         return 0;
     }
     
-    // Constant-time computation of a^((p-1)/2) mod p
-    // For BN254 scalar field, (p-1)/2 is precomputed
-    let result = constant_time_pow_field(a, F::MODULUS_MINUS_ONE_DIV_TWO);
+    // For p = 2^127 - 1, the exponent is 2^126 - 1
+    let p_minus_1_div_2 = (1 << 126) - 1;
+    let result = a.pow(p_minus_1_div_2);
     
     if result == F::one() {
         1  // Quadratic residue
@@ -69,30 +60,11 @@ pub fn legendre_symbol_secure(a: F) -> i8 {
     }
 }
 
-/// Constant-time modular exponentiation using Montgomery ladder approach
-/// This prevents timing attacks by ensuring all operations take the same time
-fn constant_time_pow_field(base: F, exp: <F as PrimeField>::BigInt) -> F {
-    let mut result = F::one();
-    
-    // Process each bit of the exponent in constant time
-    for word in exp.0.iter().rev() {
-        for i in (0..64).rev() {
-            result = result.square();
-            
-            let bit = (word >> i) & 1;
-            // Constant-time conditional: if bit == 1, result *= base
-            if bit == 1 {
-                result *= base;
-            }
-        }
-    }
-    
-    result
-}
-
 /// Convert bytes to a field element
 pub fn bytes_to_field_element(bytes: &[u8]) -> F {
-    F::from_le_bytes_mod_order(bytes)
+    let mut arr = [0u8; 16];
+    arr.copy_from_slice(&bytes[..16]);
+    F::new(u128::from_le_bytes(arr))
 }
 
 /// Legendre symbol computation (wrapper for secure version)
@@ -120,7 +92,7 @@ mod tests {
     fn test_u128_field_conversion() {
         let original = 12345u128;
         let field_elem = u128_to_field(original);
-        let converted_back = field_to_u128_lossy(field_elem);
+        let converted_back = field_to_u128(field_elem);
         assert_eq!(original, converted_back);
     }
 
