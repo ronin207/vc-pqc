@@ -21,6 +21,7 @@ pub mod verify;
 pub mod field_p127;
 pub mod merkle;
 pub mod ldt;
+pub mod fft;
 
 pub mod benchmark;
 pub mod tests;
