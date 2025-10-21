@@ -99,9 +99,23 @@ impl Fp127 {
         if self.is_zero() { return None; }
         Some(self.pow(MODULUS - 2))
     }
-    
+
     pub fn rand<R: Rng>(rng: &mut R) -> Self {
-        Self(rng.gen::<u128>() % MODULUS)
+        loop {
+            let candidate = rng.gen::<u128>() & ((1u128 << 127) - 1);
+            if candidate < MODULUS {
+                return Self(candidate);
+            }
+        }
+    }
+
+    pub fn rand_nonzero<R: Rng>(rng: &mut R) -> Self {
+        loop {
+            let value = Self::rand(rng);
+            if !value.is_zero() {
+                return value;
+            }
+        }
     }
 }
 
@@ -147,11 +161,41 @@ impl Fp2 {
         Self::new(Fp127::rand(rng), Fp127::rand(rng))
     }
 
+    pub fn rand_nonzero<R: Rng>(rng: &mut R) -> Self {
+        loop {
+            let candidate = Self::rand(rng);
+            if !candidate.is_zero() {
+                return candidate;
+            }
+        }
+    }
+
     pub fn inverse(self) -> Option<Self> {
         if self.is_zero() { return None; }
         let denominator = self.c0*self.c0 - self.c1*self.c1 * *QNR;
         let inv_denom = denominator.inverse()?;
         Some(Self::new(self.c0 * inv_denom, -self.c1 * inv_denom))
+    }
+
+    pub fn pow_two(self, exponent: usize) -> Self {
+        let mut result = self;
+        for _ in 0..exponent {
+            result *= result;
+        }
+        result
+    }
+
+    pub fn pow(self, mut exp: u128) -> Self {
+        let mut result = Self::one();
+        let mut base = self;
+        while exp > 0 {
+            if exp & 1 == 1 {
+                result *= base;
+            }
+            base *= base;
+            exp >>= 1;
+        }
+        result
     }
 }
 
@@ -180,6 +224,22 @@ impl Neg for Fp2 {
     fn neg(self) -> Self { Self::new(-self.c0, -self.c1) }
 }
 
+impl AddAssign for Fp2 {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign for Fp2 {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl MulAssign for Fp2 {
+    fn mul_assign(&mut self, rhs: Self) { *self = *self * rhs; }
+}
+
 impl Sum for Fp2 {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
         iter.fold(Self::zero(), |a, b| a + b)
@@ -194,4 +254,27 @@ impl<'a> Sum<&'a Fp2> for Fp2 {
 
 impl fmt::Debug for Fp2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "Fp2({:?}, {:?})", self.c0, self.c1) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fp127_rand_nonzero() {
+        let mut rng = rand::thread_rng();
+        for _ in 0..256 {
+            let sample = Fp127::rand_nonzero(&mut rng);
+            assert!(!sample.is_zero());
+        }
+    }
+
+    #[test]
+    fn test_fp2_pow_two_matches_squaring() {
+        let mut rng = rand::thread_rng();
+        let sample = Fp2::rand_nonzero(&mut rng);
+        let squared = sample * sample;
+        assert_eq!(sample.pow_two(1), squared);
+        assert_eq!(sample.pow_two(2), squared * squared);
+    }
 }
