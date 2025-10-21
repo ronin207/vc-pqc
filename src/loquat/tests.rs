@@ -7,12 +7,12 @@
 
 #[cfg(test)]
 mod integration_tests {
-    use crate::loquat::field_utils::{legendre_prf_secure, u128_to_field, F};
+    use crate::loquat::field_utils::{legendre_prf_secure, u128_to_field, F, F2};
     use crate::loquat::keygen::keygen_with_params;
     use crate::loquat::setup::loquat_setup;
     use crate::loquat::sign::loquat_sign;
     use crate::loquat::verify::loquat_verify;
-    use crate::loquat::field_p127::{Fp127, Fp2}; // Import the new field types
+    use crate::loquat::field_p127::Fp2; // Import the new field types
 
     /// Test complete signature generation and verification flow
     #[test]
@@ -150,6 +150,24 @@ mod integration_tests {
         signature.pi_us.claimed_sum = signature.pi_us.claimed_sum + Fp2::one();
         let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
         assert!(!is_valid, "Signature with tampered sumcheck proof should be invalid");
+
+        // Tamper with FRI layer commitment
+        let mut signature = loquat_sign(message, &keypair, &params).expect("Signature generation should succeed");
+        signature.ldt_proof.commitments[1][0] ^= 1;
+        let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
+        assert!(!is_valid, "Signature with tampered FRI commitment should be invalid");
+
+        // Tamper with FRI codeword chunk
+        let mut signature = loquat_sign(message, &keypair, &params).expect("Signature generation should succeed");
+        signature.fri_codewords[0][0] = signature.fri_codewords[0][0] + F2::one();
+        let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
+        assert!(!is_valid, "Signature with tampered FRI codeword chunk should be invalid");
+
+        // Tamper with Π row folding values
+        let mut signature = loquat_sign(message, &keypair, &params).expect("Signature generation should succeed");
+        signature.fri_rows[0][0][0] = signature.fri_rows[0][0][0] + F2::one();
+        let is_valid = loquat_verify(message, &signature, &keypair.public_key, &params).expect("Verification should complete");
+        assert!(!is_valid, "Signature with tampered Π row folding data should be invalid");
     }
 
     #[test]
