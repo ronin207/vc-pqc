@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use super::field_utils::{F, F2};
+use super::field_utils::F2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LDTProof {
@@ -10,7 +10,8 @@ pub struct LDTProof {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LDTOpening {
     pub position: usize,
-    pub codeword_eval: F2,
-    pub opening_proof: Vec<F2>,
+    pub codeword_chunks: Vec<Vec<F2>>,
+    pub final_eval: F2,
+    pub row_chunks: Vec<Vec<Vec<F2>>>,
     pub auth_path: Vec<Vec<u8>>,
 }
