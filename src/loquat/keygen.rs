@@ -52,14 +52,11 @@ pub fn keygen_with_params(params: &LoquatPublicParams) -> LoquatResult<LoquatKey
     let mut attempts = 0;
     let secret_key = loop {
         attempts += 1;
-        let candidate = F::rand(&mut rng);
+        let candidate = F::rand_nonzero(&mut rng);
         
         if !excluded_set.contains(&candidate) && !candidate.is_zero() {
-            println!("✓ Valid secret key K found after {} attempts", attempts);
-            println!("  K ∈ F_p* \\ {{0, -I₁, ..., -I_L}} constraint satisfied");
-            if attempts == 1 {
-                println!("  K = {:?} (showing only for first attempt)", candidate);
-            }
+            println!("✓ Secret key sampled after {} attempt(s)", attempts);
+            println!("  Constraint K ∈ F_p* \\ {{-I₁, ..., -I_L}} satisfied");
             break candidate;
         }
         
