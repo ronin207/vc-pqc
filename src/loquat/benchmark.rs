@@ -1,7 +1,7 @@
 use std::time::Instant;
 use super::setup::loquat_setup;
 use super::keygen::keygen_with_params;
-use super::sign::{loquat_sign, LoquatSignature};
+use super::sign::loquat_sign;
 use super::verify::loquat_verify;
 
 /// Hash function type for benchmarking
