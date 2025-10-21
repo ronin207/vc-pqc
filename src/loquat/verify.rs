@@ -87,70 +87,142 @@ fn verify_ldt_proof(
     }
     println!("✓ Re-derived {} FRI folding challenges", folding_challenges.len());
     
-    let mut query_positions = Vec::with_capacity(params.kappa);
-    for q in 0..params.kappa {
-        let challenge = transcript_challenge_f2(transcript);
-        let position = challenge.c0.0 as usize % params.coset_u.len();
-        query_positions.push(position);
+    if signature.fri_codewords.len() != params.r + 1
+        || signature.fri_rows.len() != params.r + 1
+        || signature.fri_challenges.len() != params.r
+    {
+        println!("✗ Signature missing FRI folding transcript");
+        return Ok(false);
     }
-    println!("✓ Re-derived {} query positions", query_positions.len());
-    
+
+    if signature.fri_rows[0].len() != signature.pi_rows.len() {
+        println!("✗ Π row count mismatch");
+        return Ok(false);
+    }
+
+    for (idx, layer) in signature.fri_codewords.iter().enumerate() {
+        let leaves: Vec<Vec<u8>> = layer.iter().map(|v| bincode::serialize(v).unwrap()).collect();
+        let tree = super::merkle::MerkleTree::new(&leaves);
+        let root = tree.root().ok_or_else(|| LoquatError::MerkleError {
+            operation: "verify_fri_root".to_string(),
+            details: "Merkle tree root is empty".to_string(),
+        })?;
+        if root.as_slice() != ldt_proof.commitments[idx] {
+            println!("✗ FRI commitment mismatch at layer {}", idx);
+            return Ok(false);
+        }
+    }
+
+    if folding_challenges != signature.fri_challenges {
+        println!("✗ Folding challenges mismatch between signer and verifier");
+        return Ok(false);
+    }
+
+    let chunk_size = 1 << params.eta;
+
     println!("\n--- Step 4: Verifying κ={} LDT Query Proofs ---", params.kappa);
-    let mut successful_queries = 0;
-    
-    for (query_idx, &query_pos) in query_positions.iter().enumerate() {
-        let opening = &ldt_proof.openings[query_idx];
-        
-        if opening.position != query_pos {
-            println!("✗ Query {}: Position mismatch. Expected {}, got {}", 
-                     query_idx, query_pos, opening.position);
+    for (query_idx, opening) in ldt_proof.openings.iter().enumerate() {
+        let challenge = transcript_challenge_f2(transcript);
+        let expected_pos = challenge.c0.0 as usize % signature.fri_codewords[0].len();
+        if opening.position != expected_pos {
+            println!("✗ Query {}: position mismatch with transcript challenge", query_idx);
             return Ok(false);
         }
-        
-        let final_pos = query_pos >> params.r;
-        let final_commitment = &ldt_proof.commitments.last().unwrap();
-        
-        let mut current_value = opening.codeword_eval;
-        let mut current_position = query_pos;
-        
+        if opening.position >= signature.fri_codewords[0].len() {
+            println!("✗ Query {}: position out of range", query_idx);
+            return Ok(false);
+        }
+        if opening.codeword_chunks.len() != params.r
+            || opening.row_chunks.len() != params.r
+        {
+            println!("✗ Query {}: incomplete folding data", query_idx);
+            return Ok(false);
+        }
+
+        let mut fold_index = opening.position;
         for round in 0..params.r {
-            let sibling_value = opening.opening_proof[round];
-            let challenge = folding_challenges[round];
-            
-            current_value = if current_position % 2 == 0 {
-                current_value + challenge * sibling_value
+            let layer_len = signature.fri_codewords[round].len();
+            let chunk_len = chunk_size.min(layer_len);
+            let chunk_start = if layer_len > chunk_size {
+                (fold_index / chunk_size) * chunk_size
             } else {
-                sibling_value + challenge * current_value
+                0
             };
-            current_position /= 2;
+            let chunk_end = (chunk_start + chunk_len).min(layer_len);
+
+            let expected_chunk = &signature.fri_codewords[round][chunk_start..chunk_end];
+            if opening.codeword_chunks[round] != expected_chunk {
+                println!("✗ Query {}: codeword chunk mismatch at round {}", query_idx, round);
+                return Ok(false);
+            }
+
+            let mut coeff = F2::one();
+            let mut folded_val = F2::zero();
+            for &val in expected_chunk {
+                folded_val += val * coeff;
+                coeff *= signature.fri_challenges[round];
+            }
+
+            let expected_next = signature.fri_codewords[round + 1][fold_index / chunk_size];
+            if folded_val != expected_next {
+                println!("✗ Query {}: codeword folding inconsistency at round {}", query_idx, round);
+                return Ok(false);
+            }
+
+            if signature.fri_rows[round].len() != opening.row_chunks[round].len() {
+                println!("✗ Query {}: row chunk count mismatch at round {}", query_idx, round);
+                return Ok(false);
+            }
+
+            for (row_idx, chunk) in opening.row_chunks[round].iter().enumerate() {
+                let expected_row_chunk = &signature.fri_rows[round][row_idx][chunk_start..chunk_end];
+                if chunk != expected_row_chunk {
+                    println!("✗ Query {}: Π row chunk mismatch at round {}, row {}", query_idx, round, row_idx);
+                    return Ok(false);
+                }
+
+                let mut coeff = F2::one();
+                let mut folded_row = F2::zero();
+                for &val in chunk {
+                    folded_row += val * coeff;
+                    coeff *= signature.fri_challenges[round];
+                }
+
+                let expected_row_next = signature.fri_rows[round + 1][row_idx][fold_index / chunk_size];
+                if folded_row != expected_row_next {
+                    println!("✗ Query {}: Π row folding inconsistency at round {}, row {}", query_idx, round, row_idx);
+                    return Ok(false);
+                }
+            }
+
+            if layer_len > chunk_size {
+                fold_index /= chunk_size;
+            } else {
+                fold_index = 0;
+            }
         }
-        
-        let final_leaf_data = bincode::serialize(&current_value).unwrap();
-        
-        if !super::merkle::MerkleTree::verify_auth_path(
-            *final_commitment, 
-            &final_leaf_data, 
-            final_pos, 
-            &opening.auth_path
-        ) {
-            println!("✗ Query {}: Merkle authentication failed for final commitment", query_idx);
+
+        let final_expected = signature.fri_codewords.last().unwrap()[fold_index];
+        if opening.final_eval != final_expected {
+            println!("✗ Query {}: final folded evaluation mismatch", query_idx);
             return Ok(false);
         }
-        
-        successful_queries += 1;
+
+        let leaf_bytes = bincode::serialize(&opening.final_eval).unwrap();
+        if !super::merkle::MerkleTree::verify_auth_path(
+            ldt_proof.commitments.last().unwrap().as_ref(),
+            &leaf_bytes,
+            fold_index,
+            &opening.auth_path,
+        ) {
+            println!("✗ Query {}: final Merkle authentication failed", query_idx);
+            return Ok(false);
+        }
     }
-    
-    println!("✓ LDT Query Verification: {}/{} queries passed", successful_queries, params.kappa);
-    
-    let ldt_success = successful_queries == params.kappa;
-    
-    if ldt_success {
-        println!("✓ LDT VERIFICATION SUCCESSFUL");
-    } else {
-        println!("✗ LDT VERIFICATION FAILED");
-    }
-    
-    Ok(ldt_success)
+
+    println!("✓ LDT Query Verification: {} queries passed", params.kappa);
+    println!("✓ LDT VERIFICATION SUCCESSFUL");
+    Ok(true)
 }
 
 pub fn loquat_verify(
@@ -197,9 +269,26 @@ pub fn loquat_verify(
     transcript.challenge_bytes(b"h2", &mut h2_bytes);
     println!("✓ h₂ = H₂(σ₂, h₁) recomputed");
     
-    let _lambdas = expand_challenge(&h2_bytes, num_checks, b"lambdas", &mut |b| F2::new(field_utils::bytes_to_field_element(b), F::zero()));
-    let _e_j: Vec<F2> = expand_challenge(&h2_bytes, params.n, b"e_j", &mut |b| F2::new(field_utils::bytes_to_field_element(b), F::zero()));
+    let lambda_scalars: Vec<F> = expand_challenge(&h2_bytes, num_checks, b"lambdas", &mut |b| field_utils::bytes_to_field_element(b));
+    let epsilon_vals: Vec<F2> = expand_challenge(&h2_bytes, params.n, b"e_j", &mut |b| F2::new(field_utils::bytes_to_field_element(b), F::zero()));
     println!("✓ Expanded h₂ to regenerate λ_{{i,j}} and ε_j values");
+
+    if signature.pi_rows.len() != 8 {
+        println!("✗ Signature missing stacked matrix rows");
+        return Ok(false);
+    }
+
+    if signature.c_prime_evals.len() != params.n
+        || signature.s_evals.len() != params.coset_u.len()
+        || signature.h_evals.len() != params.coset_u.len()
+        || signature.f_prime_evals.len() != params.coset_u.len()
+        || signature.p_evals.len() != params.coset_u.len()
+        || signature.f0_evals.len() != params.coset_u.len()
+        || signature.pi_rows.iter().any(|row| row.len() != params.coset_u.len())
+    {
+        println!("✗ Signature has inconsistent evaluation vector lengths");
+        return Ok(false);
+    }
 
     println!("\n================== ALGORITHM 7: STEP 3 - CHECKING PROOFS ==================");
 
@@ -229,6 +318,76 @@ pub fn loquat_verify(
     }
     println!("✓ All Legendre PRF checks passed");
 
+    let mut mu_check = F2::zero();
+    for j in 0..params.n {
+        let epsilon = epsilon_vals[j];
+        for i in 0..params.m {
+            let lambda_scalar = lambda_scalars[j * params.m + i];
+            let o_scalar = signature.o_values[j][i];
+            mu_check += epsilon * F2::new(lambda_scalar * o_scalar, F::zero());
+        }
+    }
+    if mu_check != signature.mu {
+        println!("✗ μ mismatch between prover and verifier");
+        return Ok(false);
+    }
+    println!("✓ μ value verified");
+
+    if signature.e_vector.len() != 8 {
+        println!("✗ e-vector length mismatch");
+        return Ok(false);
+    }
+
+    let mut c_row_expected = Vec::with_capacity(params.coset_u.len());
+    for idx in 0..params.coset_u.len() {
+        let mut sum = F2::zero();
+        for j in 0..params.n {
+            sum += signature.c_prime_evals[j][idx];
+        }
+        c_row_expected.push(sum);
+    }
+    if c_row_expected != signature.pi_rows[0] {
+        println!("✗ Stacked matrix ĉ′ row mismatch");
+        return Ok(false);
+    }
+    if signature.s_evals != signature.pi_rows[1]
+        || signature.h_evals != signature.pi_rows[2]
+        || signature.p_evals != signature.pi_rows[3]
+    {
+        println!("✗ Π₀ rows do not match stored evaluations");
+        return Ok(false);
+    }
+
+    for row_idx in 0..4 {
+        let exponent = params
+            .rho_star_num
+            .checked_sub(params.rho_numerators[row_idx])
+            .ok_or_else(|| LoquatError::invalid_parameters("ρ* < ρ_i"))? as u128;
+        let mut scaled_expected = Vec::with_capacity(params.coset_u.len());
+        for (value, &y) in signature.pi_rows[row_idx].iter().zip(params.coset_u.iter()) {
+            let y_pow = y.pow(exponent);
+            scaled_expected.push(*value * y_pow);
+        }
+        if scaled_expected != signature.pi_rows[row_idx + 4] {
+            println!("✗ Π₁ row {} mismatch", row_idx + 1);
+            return Ok(false);
+        }
+    }
+    println!("✓ Π rows verified");
+
+    let mut f0_expected = vec![F2::zero(); params.coset_u.len()];
+    for (row_idx, row) in signature.pi_rows.iter().enumerate() {
+        let coeff = signature.e_vector[row_idx];
+        for (col, value) in row.iter().enumerate() {
+            f0_expected[col] += coeff * *value;
+        }
+    }
+    if f0_expected != signature.f0_evals {
+        println!("✗ f^(0) evaluations mismatch");
+        return Ok(false);
+    }
+    println!("✓ f^(0) evaluations verified");
+
     println!("\n--- Step 3.2: Univariate Sumcheck Verification ---");
     let num_variables = (params.coset_h.len()).trailing_zeros() as usize;
     let sumcheck_result = verify_sumcheck_proof(&signature.pi_us, num_variables, &mut transcript)?;
@@ -237,6 +396,34 @@ pub fn loquat_verify(
         return Ok(false);
     }
     println!("✓ SUMCHECK PASSED");
+
+    transcript.append_message(b"root_s", &signature.root_s);
+    transcript.append_message(b"s_sum", &bincode::serialize(&signature.s_sum).unwrap());
+    println!("✓ σ₃ = (root_s, S) added to transcript");
+
+    let mut h3_bytes = [0u8; 32];
+    transcript.challenge_bytes(b"h3", &mut h3_bytes);
+    let expected_z_scalar = field_utils::bytes_to_field_element(&h3_bytes);
+    let expected_z = F2::new(expected_z_scalar, F::zero());
+    if expected_z != signature.z_challenge {
+        println!("✗ Z challenge mismatch");
+        return Ok(false);
+    }
+    println!("✓ h₃ challenge verified");
+
+    transcript.append_message(b"root_h", &signature.root_h);
+    println!("✓ σ₄ = (root_h) added to transcript");
+
+    let mut h4_bytes = [0u8; 32];
+    transcript.challenge_bytes(b"h4", &mut h4_bytes);
+    let expected_e_vector = expand_challenge(&h4_bytes, 8, b"e_vector", &mut |b| {
+        F2::new(field_utils::bytes_to_field_element(b), F::zero())
+    });
+    if expected_e_vector != signature.e_vector {
+        println!("✗ e-vector mismatch in Algorithm 5");
+        return Ok(false);
+    }
+    println!("✓ h₄ challenge verified");
 
     println!("\n--- Step 3.3: Low-Degree Test Verification ---");
     let ldt_result = verify_ldt_proof(signature, params, &mut transcript)?;
