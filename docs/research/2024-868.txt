@@ -1,0 +1,2417 @@
+Loquat: A SNARK-Friendly Post-Quantum
+Signature based on the Legendre PRF with
+Applications in Ring and Aggregate Signatures
+Xinyu Zhang1,2, Ron Steinfeld1, Muhammed F. Esgin1, Joseph K. Liu1,
+Dongxi Liu2, and Sushmita Ruj3
+1Monash University, Melbourne, Australia
+{Xinyu.Zhang1,Ron.Steinfeld,Muhammed.Esgin,Joseph.Liu }@monash.edu
+2Data61, CSIRO, Sydney, Australia
+Dongxi.Liu@csiro.au
+3University of New South Wales
+Sushmita.Ruj@unsw.edu
+Abstract. We design and implement a novel post-quantum signature
+scheme based on the Legendre PRF, named Loquat . Prior to this work,
+efficient approaches for constructing post-quantum signatures with com-
+parable security assumptions mainly used the MPC-in-the-head paradigm
+or hash trees. Our method departs from these paradigms and, notably,
+is SNARK-friendly, a feature not commonly found in earlier designs.
+Loquat requires significantly fewer computational operations for verifi-
+cation than other symmetric-key-based post-quantum signature schemes
+that support stateless many-time signing. Notably, the performance of
+Loquat remains practical even when employing algebraic hash func-
+tions. Our Python-based implementations of Loquat demonstrate a sig-
+nature size of 46KB, with a signing time of 5.04 seconds and a verifica-
+tion time of merely 0.21 seconds. Instantiating the random oracle with
+an algebraic hash function results in the R1CS constraints for signature
+verification being about 148K, 7 to 175 times smaller than those required
+for state-of-the-art MPC-in-the-head-based signatures and 3 to 9 times
+less than those for SPHINCS+ [Bernstein et al. CCS19].
+We explore two applications of Loquat . First, we incorporate it into
+the ID-based ring signature scheme [Buser et al. ACNS22], achieving a
+significant reduction in signature size from 1.9 MB to 0.9 MB with state-
+less signing and practical master key generation. Our second application
+presents a SNARK-based aggregate signature scheme. We use the imple-
+mentations of Aurora [Ben-Sasson et al. EC19] and Fractal [Chiesa et al.
+EC20] to benchmark our aggregate signatures performance. Our find-
+ings show that aggregating 32 Loquat signatures using Aurora results in
+a proving time of about 7 minutes, a verification time of 66 seconds, and
+an aggregate signature size of 197 KB. Furthermore, by leveraging the
+recursive proof composition feature of Fractal, we achieve an aggregate
+signature with a constant size of 145 KB, illustrating Loquats potential
+for scalability in cryptographic applications.
+Keywords: Post-Quantum Signature Legendre PRF SNARK Ag-
+gregate Signature ID-Based Ring Signature
+1 Introduction
+In the last decade, the increasing computational feasibility of quantum com-
+puting infrastructures, including quantum as a service (QaaS), has rejuvenated
+the cryptographic communitys concern about the threats raised by quantum-
+enabled algorithms, notably Shors polynomial-time quantum algorithm for fac-
+toring and computing discrete logarithms [61]. In late 2016, NIST announced a
+process to select quantum-resistant public key cryptographic alternatives whose
+security would not be undermined by quantum computers. Among the options
+considered by the community and stakeholders is the use of symmetric-key prim-
+itives as building blocks. Existing signature schemes based on symmetric-key
+primitives can be categorized into one of two paradigms: hash-based signatures
+[52, 22, 44, 13, 14] or MPC-in-the-head-based signatures [25, 49, 45, 59, 6, 16, 58,
+30]. Compared to post-quantum digital signatures derived from lattice cryptog-
+raphy [31, 56], the majority of the previously mentioned signatures exhibit larger
+sizes and longer running times. However, symmetric-key-based approaches con-
+tinue to be regarded as crucial, given the necessity of developing post-quantum
+cryptographic primitives using a diverse range of mathematical assumptions.
+The advent of practical Succinct Non-Interactive Argument of Knowledge
+(SNARK) protocols shows a new direction for constructing advanced crypto-
+graphic primitives with post-quantum security, including ring signatures [23] and
+aggregate signatures [50]. In these schemes, the validity of signatures is proven
+by a SNARK protocol, which requires converting the signature verification al-
+gorithm into a language recognizable by SNARKs, such as Rank-1 Constraint
+System (R1CS). Consequently, the efficiency of these primitives is closely linked
+to the complexity of constraint systems. Despite the surge in research aimed at
+enhancing the performance of post-quantum ring and aggregate signatures, the
+area of SNARK-friendly signatures remains comparatively undeveloped. This
+gap serves as a key motivator for our research, which is dedicated to develop-
+ing a post-quantum signature scheme that relies on symmetric-key primitives
+based security assumptions and is inherently SNARK-compatible (i.e., can be
+efficiently proven by SNARKs).
+1.1 Challenges of Enabling SNARK-Compatibility using
+Symmetric-Key Primitives
+Hash-based Paradigm. The construction of hash-based signature schemes can
+be traced back to the late 1970s, when Lamport [52] proposed the first hash-
+based one-time signature (OTS). To increase the signing capacity, an OTS can
+be combined with a Merkle tree [55] to obtain a hash-based many-time signature
+(MTS). Such constructions, culminating in XMSS [22] and its multi-tree variant
+[44], are quite efficient with minimal security assumptions. Nonetheless, signa-
+ture schemes like XMSS suffer from stateful signing (i.e., the signer must store
+the used one-time secret keys somewhere and ensure they are never reused). In
+order to eliminate the statefulness, Bernstein et al. proposed SPHINCS [13] and
+2
+SPHINCS+ [14], which incorporated hash-based few-time signatures (FTS) into
+a hyper-tree (a tree of Merkle trees).
+Signature verification in hash-based schemes typically involves a large number
+of hash function evaluations. Using a standard hash function such as SHA-256
+tends to impose a substantial number of R1CS constraints (approximately 27,000
+per hash evaluation). To address this issue, it becomes necessary to explore
+algebraic alternatives such as Poseidon [41], Rescue-prime [62], or Griffin [39].
+Unfortunately, despite the optimized R1CS efficiency, algebraic hash functions
+suffer from slow performance when implemented in native computations.4
+Concretely, the SageMath implementation of Griffin exhibits a running time
+of 7 ms per permutation for an input size of 64 bytes, while the Python im-
+plementation of SHA-256 runs in just 0.034 ms for the same input size. The
+performance gap stems from the fact that the round function in algebraic hash
+utilizes finite field multiplications, which require hundreds of CPU cycles, in
+contrast to the bit operations employed by traditional hash functions. Replacing
+the standard hash with an R1CS-friendly hash would result in impractical key
+generation and/or signing time for hash-based MTS schemes, including XMSS,
+SPHINCS, and SPHINCS+, due to the performance loss.
+It is worth noting that the performance degradation caused by using alge-
+braic hash functions is present in all signature schemes, including MPCitH-based
+schemes and our scheme. However, the impact on signing and/or key generation
+runtimes is more pronounced in hash-based schemes, as they typically require
+considerably more hash evaluations compared to schemes constructed with other
+paradigms.
+MPC-in-the-Head based Paradigm. MPCitH-based post-quantum signa-
+ture schemes [25, 49, 45, 59, 6, 16, 58, 30] are constructed by enabling the signer
+to prove to the verifier (in zero-knowledge) that he/she has a secret key kcor-
+responding to the public key ( x, y), satisfying the condition y=fk(x), where f
+represents a symmetric one-way function (e.g., block ciphers).
+The idea is that the prover simulates an N-party computation protocol in
+the head, where each party is equipped with a private random tape and a secret
+share of the input. The simulated MPC computation results in Noutput shares
+that are sent to the verifier, together with (binding and hiding) commitments
+to the input shares of all parties, their random tapes, and exchanged messages
+(referred to as views). Upon receiving these commitments, the verifier challenges
+the prover to randomly open T < N commitments and checks that all commit-
+ted messages (and output shares) are consistent with an honest execution of the
+MPC protocol (i.e., by honestly re-executing the MPC protocol with Topened
+parties). Typically, the process is repeated Mtimes to achieve negligible sound-
+4An exception is Reinforced Concrete (RC) [40], which applies lookup tables in Fp,
+leading to a remarkable speedup of up to 15x compared to other algebraic hash func-
+tions such as Poseidon [41]. However, this technique prevents RC from being efficiently
+utilized in R1CS-based SNARKs or AIR-based STARKs.
+3
+ness error, and the interaction can be eliminated by applying the Fiat-Shamir
+heuristic [32].
+In the original version of Picnic [25], the verifier randomly opens 2-out-of-3
+parties, which leads to an extensive number of parallel executions (219 for 128-
+bit security) as each repetition has a relatively large soundness error. Katz et al.
+[49] enhanced the MPCitH framework by introducing an input-independent pre-
+processing phase, enabling the protocol to rely on n-party MPC functionalities.
+Their approach involves a cut-and-choose mechanism, where the prover runs
+Mpreprocessing simulations, of which the verifier selects Mto check. The re-
+maining executions are then used to run online executions of the n-party MPC
+protocol. Each MPC instance is then verified by revealing views of all-but-one
+party. This framework is generally applied in subsequent MPCitH-based schemes
+[45, 59, 6, 16, 58, 30].
+Despite the fact that MPCitH-based signature schemes show good perfor-
+mance on native computers, they fall short in achieving succinct verification. In
+essence, the verifier undertakes similar tasks as the prover, leading to millions
+of R1CS constraints per verification. This inefficiency renders the framework
+unsuitable for SNARK-based applications.
+1.2 Our Contributions
+Our contributions are twofold. Firstly, we introduce a novel post-quantum signa-
+ture scheme called Loquat (Legendre PRF-based SNARK-friendly p ost-quantum
+signature), which stands out as the most SNARK-friendly post-quantum signa-
+ture scheme constructed solely using symmetric-key primitives. We implement
+Loquat in Python and evaluate its performance across a range of parameters
+to accommodate distinct security levels.
+Secondly, we demonstrate the practicality of Loquat in SNARK-based cryp-
+tographic applications, including ID-based ring signatures [23] and aggregate sig-
+natures. Our comparative analysis with existing schemes illustrates that Loquat
+emerges as the preferred signature scheme in scenarios where the application ne-
+cessitates post-quantum security from symmetric-key primitives and stateless
+signing. We now provide further details of our contributions.
+Contribution I. SNARK-friendly Post-Quantum Signature from the
+Legendre PRF. Loquat offers the following features that all prior works fail
+to meet these criteria on one or more counts.
+Succinct Verification : The verifier in Loquat has significantly fewer com-
+putational operations than the prover, making it particularly effective for
+proving signature validity with SNARKs.
+Practical Key Generation and Signing : The time required for key gen-
+eration and signing remains practical when using algebraic hash functions.
+Security Assumptions based on Symmetric-Key Primitives : The
+security of Loquat solely relies on symmetric-key primitives, specifically
+collision-resistant hash functions and the Legendre PRF.
+4
+Our construction of Loquat does not rely on the existing MPC-in-the-Head
+approach or on using a generic zkSNARK protocol.5Instead, we show a novel
+reduction that transforms the task of designing a key identification protocol for
+the Legendre PRF into the task of designing a multivariate polynomial commit-
+ment. This reduction facilitates succinct verification. We further optimize the
+protocol in terms of SNARK-friendliness using multiple methods, including a
+novel approach to verify quadratic residuosity in the SNARK circuit.
+We implement Loquat using Python and test its performance on a 2021
+MacBook Pro with an Apple M1 Max chip and 32GB RAM. Despite the inherent
+performance degradation in Python programs, the signing and verification times
+of our scheme are 5.04 and 0.21 seconds, respectively, with a signature size of
+57KB, targeting standard 128-bit security. When replacing the standard hash
+function with Griffin [39], the signing time extends to 105 seconds (284 times
+faster than the signing of SPHINCS+ when instantiated with the same algebraic
+hash function), while the verification process completes in 11 seconds.
+Compared to Rainier [30], a state-of-the-art symmetric-key primitives-based
+signature scheme, our signature size is 6.8 times larger. However, Loquat s ver-
+ification circuit is notably smaller, being 176 times smaller than that of Rainier.
+It is important to note that direct comparisons of proving and verification times
+between Loquat and Rainier should be approached with caution due to the
+differences in implementation languages (C++ for Rainier versus Python for
+Loquat ). More comparisons can be found in Table 1.6
+Scheme ||(KB) # R1CS# Hash
+(KG)# Hash
+(Sign)
+Picnic1 [25] 32 3,451,440 0 7,008
+Picnic3 [64] 12 21,598,340 0 1,679,784
+LegRoast [16] 16 1,143,351 0 10,152
+Banquet [6] 12 11,804,560 0 4,147
+Rainer [30] 8 26,130,303 0 3,337
+SPHINCS+s [14] 7.8 458,920 305,663 2,397,129
+SPHINCS+f [14] 16 1,390,209 4,775 111,353
+Loquat -128 57 148,825 0 8,434
+Table 1. Comparison of Post-Quantum Signature Schemes based on Symmetric-Key
+Primitives. ||= signature size, # R1CS = number of R1CS constraints for verifying
+one signature, # Hash (KG)/# Hash (Sign) = the number of hash invocations in key
+generation/signing, respectively.
+5By generic zkSNARKs, we mean zkSNARK protocols that prove arbitrary cir-
+cuits, which suggest a naive way to replace the MPCitH paradigm. However, signature
+schemes based on generic zkSNARKs result in prohibitively large signatures (more
+than 200KB).
+6The results in Table 1 for other signatures are estimated.
+5
+Contribution II. Applying Loquat in SNARK-based Cryptographic
+Primitives. We introduce two key applications for SNARK-friendly signatures.
+The first application is a post-quantum ID-based ring signature proposed in [23].
+By incorporating Loquat into the existing framework, we achieve a notable
+reduction in the ring signatures size (from 1.898 MB to 0.973 MB) compared
+to the stateless Picnic-based scheme with a ring of size 26. Furthermore, in
+comparison to the stateful XMSS-based ring signature, the use of Loquat leads
+to a dramatic decrease in the time required to generate the master public key,
+dropping from 3,355 seconds to just 0.1 seconds, albeit with a slight increase in
+the ring signatures size.
+Our second application focuses on SNARK-based post-quantum aggregate
+signatures. We first construct an aggregate signature by employing Aurora [11],
+a transparent post-quantum SNARK. This approach yields a signature size that
+is polylogarithmic and a verification time that is linear in the number of signers.
+Subsequently, we illustrate the feasibility of developing an aggregate signature
+with a constant signature size by leveraging SNARKs with succinct verifications
+like Fractal [27]. We conducted our experiments using the open-source implemen-
+tations of Aurora and Fractal in libiop [1]. These experiments were carried out
+on an Ubuntu virtual machine (allocated 28GB memory) hosted on a system
+equipped with 32GB of RAM and an i7-12700KF CPU operating at 3.6GHz.
+We demonstrate the maximum number of signatures that can be aggregated
+using Aurora and Fractal within the memory constraints of 28GB in Table 2.7
+Moreover, owing to the quasi-linear proving time and linear verification time of
+Aurora, aggregating NLoquat signatures can be achieved 3 to 175 times faster
+than aggregating the same number of signatures based on other symmetric-key
+primitives.
+Scheme # Sig # R1CSSig. Size
+(KB)Agg.
+Time (s)Ver.
+Time (s)
+SPHINCS+s [14] 18(4)
+223(221)207(145) 553(556) 62(0.78)LegRoast [16] 7(1)
+Rainer [30] 0(0)
+Picnic3 [64] 0(0)
+Banquet [6] 0(0)
+Loquat 64(16)
+Table 2. Aurora and Fractal Aggregation of Different Symmetric-Key Primitives based
+Post-Quantum Signatures. # Sig = maximum number of signatures can be aggregated
+with 28GB memory, # R1CS = maximum number of R1CS constraints that can be
+proven with 28GB memory, red = Aurora-based aggregation, blue = Fractal-based
+aggregation.
+7Since the implementation of Aurora [11] and Fractal [27] support R1CS constraints
+that are powers of 2, the maximum number of signatures in Table 2 is computed as the
+floor of 223divided by the number of R1CS constraints of the signature verification.
+6
+Remark 1 (From ROM to the URS model). While we prove the EUF-CMA of
+Loquat in the random oracle model (ROM), for the aforementioned SNARK-
+based applications, we need to leave the model by heuristically instantiating the
+random oracle with a (collision-resistant) cryptographic hash function and start
+from Loquat in the URS model. The reason for this is not merely motivated
+by implementation as we now explain. Since the verifier of Loquat makes calls
+to the random oracle, and proving the validity of Loquat in ID-based ring
+signature and aggregate signature schemes requires a SNARK which can prove
+the correctness of computations that involve oracle gates. Previous research has
+shown that such SNARKs do not exist [26]. Hence, we have to instantiate the
+random oracle such that the SNARK proves the computation of cryptographic
+hash functions instead of the oracle gates. We note that random oracles cannot be
+properly instantiated in general, and so we make the same heuristic assumption
+as in other works [43, 27, 7]: there is a secure instantiation of the random oracle
+for the key identification protocol produced via Theorem 1.
+It is worth noting that the reliance on the heuristic instantiation of the ran-
+dom oracle model presents a widespread challenge for stateless post-quantum
+signature schemes in the context of SNARK-based applications. This issue has
+spurred a line of research aimed at addressing and potentially circumventing this
+theoretical obstacle.
+1.3 Related Works
+The first practical symmetric-key primitives-based aggregate signature scheme
+was introduced in [50], which compresses hash-based one-time signatures (i.e.,
+Lamport+) using STARK [9], a variant of SNARK. Owing to the succinctness
+of STARK, the aggregate signature size grows sublinearly with the number of
+signers. Furthermore, due to the simplicity of the design of one-time signatures,
+the concrete performance approaches 130KB when aggregating 128 signatures.
+Nonetheless, one-time signatures are stateful, requiring the signer to keep track
+of all used secret keys. This requirement is often not practical in real-world
+applications because it is often impossible to continuously update a key pair,
+and storing the used secret keys can pose significant challenges.
+Beyond symmetric-key primitives, the construction of aggregate signatures
+and multi-signatures has seen notable advancements through alternative post-
+quantum techniques, particularly lattice-based methods [19, 21, 20, 34, 29]. The
+advent of practical lattice-based multi-signatures, such as Chipmunk [33], under-
+scores the potential of lattices in developing advanced cryptographic primitives
+since, unlike symmetric-key primitives, lattices offer distinct advantages owing
+to the underlying algebraic structures. However, the quantitative security level
+of lattice-based cryptography is unclear despite their reasonably efficient per-
+formance [13]. This is also evident from NISTs selection of SPHINCS+ [14]
+for standardization. Despite its significant efficiency disadvantages compared to
+lattice-based alternatives, there is a practical and theoretical need to develop
+cryptographic schemes based on different cryptographic assumptions. As such,
+7
+exploring post-quantum cryptographic primitives based on a range of security
+assumptions becomes critically important.
+In this work, we focus on narrowing the performance gap between advanced
+cryptographic primitives based on lattices and symmetric-key primitives. We
+achieve this by introducing a SNARK-friendly signature scheme that stands
+out for its reliance on distinct security assumptions compared to lattice-based
+alternatives. This approach not only offers practical benefits but also presents
+theoretical interest in the realm of cryptography.
+2 Technical Overview
+We start with an overview of the key identification problem for the Legendre
+PRF, followed by the description of the identification protocol based on MPC-
+in-the-head as presented in LegRoast [16]. We then introduce our approach of
+replacing the MPC-in-the-head with a polynomial commitment scheme, which
+facilitates succinct verification.
+2.1 Key Identification Problem of the Legendre PRF
+The Legendre PRF (Section 3.1) is a one-way function denoted by LK() :Fp
+Z2, which on input a random field element aFp(and a hard-coded secret
+keyK), outputs a bit indicating the quadratic residuosity of ( K+a). Owing
+to the limitation that the PRF only produces one bit of output, the public
+key should consist of many PRF evaluations denoted as pk= (pk1, . . . , pk L) =
+(LK(I1), . . . ,LK(IL)) for some fixed and publicly defined arbitrary list I=
+(I1, . . . , I L). The key identification problem is described as follows: given a public
+key consists of LLegendre PRF outputs, prove the knowledge of a value Ksuch
+thatLK(I) =LK(I) for all [L] simultaneously.
+2.2 MPCitH-based Identification Protocol [16].
+A straightforward way to prove the knowledge of Kwould involve applying a
+generic zero-knowledge proof demonstrating that, for all [L], the evaluation
+ofLon the secret input Kand public input Iproduces the exact bit as pk.
+However, this approach is prohibitively expensive due to the following reasons:
+1. The circuit of evaluating Lrequires O(logp) operations, where pis a large
+prime.
+2.Lis a large integer in the case of key identification.
+Grassi et al. [42] addressed the first problem by manipulating the multi-
+plicative homomorphism of the PRF. Namely, for [L], the prover employs
+a zero-knowledge proof to demonstrate the correct computation of public val-
+uesothat is defined as o= (K+I)r, for some random rFp. Ifois
+computed honestly and K=K, then L0(o) must equal to pk+L0(r). The
+approach effectively reduces the number of arithmetic operations to be proven by
+8
+the zero-knowledge proof from O(logp) to a single multiplication and addition
+per symbol.
+To obtain a practical signature scheme, LegRoast [16] addressed the second
+problem by presenting a relaxation of the Legendre PRF relation. Instead of
+proving that the signer knows a Ksuch that L0((K+I)r) =pk+L0(r) for
+all[L], LegRoast lets a prover prove knowledge of a Ksuch that this holds
+for a large fraction of in [L]. The fraction is uniformly randomly chosen by the
+verifier after the prover commits to the claimed witness Kand the randomness
+r. It has been proven in LegRoast that this relaxed PRF relation (Definition 2) is
+as hard as the original Legendre PRF relation (Definition 1), given appropriately
+chosen parameters [16, Theorem 1].
+2.3 Our Approach for the Identification Scheme
+Our first observation is that the objective of the MPC-in-the-head (MPCitH)
+in LegRoast [16] is to demonstrate that oare computed honestly, namely, in
+the form of ( K+I)r. To achieve succinct verification, our first attempt was
+to replace MPCitH with a generic zkSNARK such as Fractal [27]. However,
+despite the small number of constraints to be proven, this approach results in
+large signature sizes and slow prover time. More importantly, it does not lead to
+sufficiently small R1CS constraints for signature verification.
+We then observed that since the witness Kand the randomness rmust
+be committed prior to the verifier sampling the random fraction (denoted as I
+such that |I|=BL) ofI, this scenario can be reformulated as a polynomial
+commitment [47] problem, treating the elements I Ias unknown values
+andK,ras coefficients. Thus, at the beginning of the protocol, the prover
+computes Blinear functions f(x) = ( K+x)r= (Kr) +rx(i.e., ( Kr)
+is the constant coefficient and ris the coefficient of the degree 1 variable in
+f(x)). The MPCitH proof of o= (K+I)rcan then be replaced by a proper
+polynomial commitment proof showing that f(I) =oforI I.
+However, symmetric-key primitives-based post-quantum polynomial commit-
+ment schemes such as RedShift [48] are (much) more expensive than MPC-in-
+the-head. Hence, we followed a batching technique as follows. Instead of proving
+oindividually, the prover proves the random linear combination of all os using
+amultivariate polynomial .
+Specifically, we let the prover to show thatPB
+=1o=PB
+=1r(K+I) =PB
+=1Kr+rIfor randomly chosen by the verifier. We treat both ver-
+ifiers challenges ( , I)Bas variables in the first round. Therefore, the prover
+defines a multilinear polynomial with 2 Bvariables as f(x1, . . . , x B, y1, . . . , y B) =
+Kr1y1+r1x1y1++KrBy1+rBxByB. Then, the prover commits to the poly-
+nomial and proves to the verifier that the evaluation of fon (I1, . . . , I B, 1, . . . ,  B)
+equals toPB
+=1o. We adopted the multivaraite polynomial commitment in
+Virgo [65] to obtain Loquat , resulting in desired Legendre PRF-based signature
+scheme with succinct verification.
+9
+Efficient Verification of Quadratic Residuosity in SNARKs The afore-
+mentioned approach enables succinct signature verification. However, proving
+L0(o) =pkI+L0(r) for [B] in the SNARK circuit can incur a large over-
+head. We introduce the following technique to demonstrate that ohas the same
+quadratic residuosity as ( K+I)r, which only requires three multiplication gates
+per symbol.
+Let us fix a quadratic non-residue (QNR) Fp. Then, we define
+t=o((pkI+T) + (1 (pkI+T))). (1)
+where T=L0(r). Note that, for o= 0, twill be a quadratic residue (QR)
+if and only if L0(o) =pkI+T(i.e., non-zero os can be easily proved with
+B+ 1 constraints in the circuit).
+Therefore, if it holds true that for all [B],L0(o) =pkI+T, we can
+find the square root softand prove in the circuit that t=ss(mod p). It
+is worth emphasizing that the computation of svalues can be done outside of
+the circuit. Consequently, the total number of constraints required to verify the
+quadratic residuosity of ois 4B+ 1.
+3 Preliminaries
+Notations LetFpdenote the prime field for a large prime pandF=Fp2de-
+note the extension field of Fp. We use bold letters to denote vectors (e.g., f), and
+f[i] denotes the i-th element in f. We use hatted letters to denote polynomials
+(e.g., f). Given a set S= (s1, . . . , s n) and a vector f= (f1, . . . , f n), we write f=
+Interpolate (S,f) the interpolation of f(X) using npoints {(s1, f1), . . . , (sn, fn)},
+andf=f|Sdenotes the evaluation of the polynomial fover the set S.
+For any nN, [n] ={1, . . . , n }, and h$Hfor a set Hdenotes that h
+is chosen uniformly at random from H. The negligible function is denoted by
+negl (), the empty string is , and the security parameter is .
+Reed-Solomon Code and Interleaved Code. Given a subset UFand a
+rate parameter (0,1], we denote by RS[U, ]F|U|the evaluations over U
+of univariate polynomials with degree less than |U|. In other words, a codeword
+f F|U|is in RS[U, ] if there exists a polynomial fof degree less than |U|
+andf=f|U.
+If there exist mlinear codes ( f1, . . . ,fm) with alphabet F, where fiFnfor
+alli[m], the interleaved code with alphabet Fmis denoted byQm
+i=1Ci
+(Fm)nFmnthat is an mnmatrix whose i-th row is fi.
+Merkle Tree In this paper, we use Merkle tree [55] as a primitive for committing
+to a vector with short commitment and logarithmic-size proof. Occasionally,
+we require not only the commitment (i.e., Merkle root) is hiding, but also the
+authentication path will not reveal any information, which is called Merkle tree
+10
+with privacy [12]. We will specify in the paper when we require Merkle tree with
+privacy. If not specified, then it runs like an original Merkle tree commitment
+scheme. The scheme consists of following algorithms:
+root cMT.Commit (c): On input a vector c, the algorithm outputs a short
+commitment root c.
+(ci,auth i)MT.Open (i,c): On input an index i, a vector cthat was commit-
+ted using MT.Commit algorithm, the deterministic algorithm outputs a leaf
+node cicand an authentication path auth i.
+(1/0)MT.Verify (root c, i, ci,auth i): On input a Merkle root root c, an
+index i, the leaf node ci, and the corresponding authentication path auth i,
+the deterministic algorithm outputs 1 if and only if ciis a valid leaf node
+with respect to the root root c. Otherwise, outputs 0.
+Fast Fourier Transform Our scheme requires polynomial evaluation and in-
+terpolation, which are implemented via Fast Fourier Transform (FFT) and its
+inverse (IFFT), respectively. Given a multiplicative coset of size dof a finite
+field, the polynomial interpolation can be performed in O(dlogd) field opera-
+tions using IFFT. We often evaluate the polynomial on a larger subspace (of size
+n > d ), which can be performed in O(nlogd) field operations via FFT.
+If there exist mlinear codes ( f1, . . . ,fm) with alphabet F, where fiFnfor
+alli[m], the interleaved code with alphabet Fmis denoted byQm
+i=1Ci
+(Fm)nFmnthat is an mnmatrix whose i-th row is fi.
+3.1 Legendre PRF
+TheLegendre PRF relies on the conjectured pseudo-randomness of the Legendre
+symbol with a secret shift [15]. Specifically, on input aFp, the Legendre symbol
+outputs {1,0,1}, depending on whether ais a square modulo p:
+a
+p
+=
+
+1,ifa=b2(mod p) for some b F
+p
+0,ifa= 0 (mod p)
+1,otherwise
+Then, the Legendre PRF is defined as:
+L0(a) =1
+2
+1a
+p
+ {0,1}
+Namely, the PRF outputs 1 if ais a quadratic non-residue (QNR) modulo p
+and 0 otherwise. The Legendre PRF has multiplicative homomorphism, that is
+L0(ab) =L0(a) +L0(b) for non-zero a, bF
+p. The keyed Legendre PRF is:
+L:FpFpZ2
+L: (K, a)7 L 0(K+a)
+andL0(K+a) is used interchangeably with LK(a).
+11
+Definition 1 (Legendre PRF relation (adapted from [16])). For an odd
+prime pand a list I= (I1, . . . , I L), where I$Fpfor all [L], we define the
+Legendre PRF relation RLas
+RL={(LK(I), K) {0,1}LFp|KFp}
+andLK(I) = (LK(I1), . . . ,LK(IL)).
+Definition 2 ( -approximate Legendre PRF relation (adapted from
+[16])). Given [0,1], an odd prime p, and a list IofLelements uniformly
+chosen from Fpat random, we define the -approximate PRF relation RLas
+RL={(s, K) {0,1}LFp|a {0,1}:dH(s+ (a, . . . , a ),LK(I))L}
+where dH(,)denotes the Hamming distance.
+According to [16, Theorem 1], the -approximate Legendre PRF relation is as
+hard as Legendre PRF relation with the probability at least 1 2pPr[B(L,1/2+
+1/p+2/p)(1)L] over the choice of I, where B(n, q) denotes the binomial
+distribution with nsamples each with success probability q. Simply put, with the
+proper choice of the parameter L(sufficiently large) and (sufficiently small)
+[16], if there exists a PPT algorithm that is able to find the -approximate
+witness K, then Kis also a witness of the exact Legendre PRF relation. For
+a comprehensive analysis of the quantum and classical security of the Legendre
+PRF, we direct interested readers to Appendix A.
+3.2 Multivariate Polynomial Commitment from Univariate
+Sumcheck
+The multivariate polynomial commitment protocol [65] allows a prover to prove
+the evaluation of a committed multivariate polynomial. This protocol builds
+upon the univariate sumcheck [11], an Interactive Oracle Proof (IOP) used to
+verify whether a given univariate polynomial f(x) sums to a specific value on
+an additive or multiplicative coset HF. Our construction differs from [65] in
+several aspects; for example, we do not use the GKR protocol [36] to reduce the
+verification time. Therefore, we only assume black-box access to the univariate
+sumcheck protocol, which can be defined as follows:
+Definition 3 (Univariate Sumcheck Relation (Adapted from [11])). The
+relation RUSis the set of all tuples ((F, U, H, d,  ),f), where Fis a finite field,
+U, H are multiplicative cosets of F,dNis the degree bound of f, and F,
+such that =P
+aHf(a)and f|URS[L,d
+|U|].
+At a high-level, the univariate sumcheck protocol allows a prover to convince
+a verifier that there exists a low-degree univariate polynomial f(x) such that
+12
+=P
+aHf(a) for FandHF. The following lemma describes the
+foundation of the univariate sumcheck protocol.8
+Lemma 1. [24] Let Hbe a multiplicative coset of F, and g(x)F[X]that has
+degree strictly less than |H|. ThenP
+aHg(a) = g(0) |H|.
+We demonstrate the underlying idea of the univariate sumcheck for bet-
+ter readability and refer the readers to [11, Section 5] for more details. Let
+f(x)F[X] of degree less than d, which can be decomposed vanto two unique
+polynomials  g(x),h(x) of degree less than |H|andd |H|, respectively, such
+that f(x)g(x) +ZH(x)h(x), where ZH(x) is the vanishing polynomial
+over H(i.e., it evaluates to 0 everywhere on H). It is not hard to see that
+=P
+aHf(a) =P
+aHg(a). Then, according to Lemma 1, =|H|g(0) since
+the degree of  gis less than |H|. In other words,|H|g(x)
+|H|xmust be a polynomial
+with degree less than |H| 1. Hence, checking if =P
+aHf(a) is equivalent
+to check:
+1. g(x) =f(x)ZH(x)h(x) is computed correctly, and
+2.|H|g(x)
+|H|xis of degree less than |H| 1.
+Let us define the rational constraint  p(x)F[X] that can be computed as
+the division of a sequence of polynomials:
+p(x) =|H|f(x) |H|ZH(x)h(x)
+|H| x(2)
+Note that if Condition 1 is satisfied, then the numerator of  p(x) is|H|g(x).
+Furthermore, if the second condition is also satisfied, then  p(x) is a polynomial
+of degree less than |H| 1 since |H|g(x)should have constant term 0 if 
+is indeed the sum. Therefore, the univaraite sumcheck is reduced to low-degree
+test of three polynomials: deg( p)<|H| 1, deg( h)< d |H|, and deg( f)< d.
+Remark 2 (Zero-Knowledge). Univariate sumcheck can be made zero-knowledge
+using standard techniques [11, Section 5.1]. Namely, to mask witness polynomial
+f(x), the prover randomly samples a polynomial  s(x) with deg( s) = deg( f)
+and computes S=P
+aHs(a). It sends Sto the verifier and commits to  s|U
+RS[U,|H|
+U]. The verifier sends a uniformly random challenge z$Fto the prover,
+who then prove the univariate sumcheck relation with respect to the claimed sum
+z+S=P
+aHzf(a) + s(a).
+8Aurora [11] introduced univariate sumcheck over both additive and multiplicative
+cosets, but their protocol was mainly designed for additive cosets. We follow [65] to
+use univariate sumcheck over multiplicative cosets for better compatibility with the
+Legendre PRF.
+13
+Low-Degree Test (LDT) Univariate sumcheck uses FRI [8] for low-degree
+test, which allows a verifier to test whether a codeword cis a member of the
+RS-code with prescribed code rate . Following previous discussion on univariate
+sumcheck, the prover needs to send three oracle codewords to the verifier:
+1.Witness oracle: f|URS[U,d
+|U|].
+2.Message oracle: h|URS[U,d|H|
+|U|].
+3.Rational constraint: p|URS[U,|H|1
+|U|]
+A straightforward way is to perform low-degree tests individually on each
+codeword. However, given that LDT is computationally expansive, Aurora em-
+ploys a strategy that facilitates the degree test for interleaved RS codes with
+different code rates using a single LDT protocol [11, Protocol 8.2]. At a high-
+level, this involves multiplying each polynomial by an appropriate monomial in
+such a way that all of them have the same (maximum) code rate. Subsequently,
+a random linear combination of the interleaved code is computed. The resulting
+codeword, with code rate , is then taken as the input to the low-degree test
+protocol.
+3.3 Digital Signature
+Definition 4 (Syntax). A signature scheme consists of the following algo-
+rithms (Setup ,KeyGen ,Sign,Verify ):
+1.(pp)Setup (). On input a security parameter , the algorithm generates
+a set of public parameters denoted as pp.
+2.(sk, pk )KeyGen (pp): On input public parameters ppgenerated in the setup
+phase, the algorithm outputs a key pair (sk, pk ).
+3.Sign (sk, m, pp): On input a secret key sk, a message m, and public
+parameters pp, the (randomized) algorithm outputs a signature .
+4.(0/1)Verify (pk, m, , pp): On input a public key pk, a message m, a
+signature , and public parameters pp, the (deterministic) algorithm outputs
+1 (accept) or 0 (reject).
+A signature scheme should be correct and existential unforgeable under adap-
+tive chosen message attacks (EUF-CMA) [38]. We first define the correctness of
+the signature scheme.
+Definition 5 (Correctness). For any message m,
+Pr
+Verify (pk, m,  ) = 1(sk, pk )KeyGen
+Sign (sk, m )
+= 1
+We first reduce the EUF-KO (existential unforgeability against key-only at-
+tacks) of Loquat to the -approximate Legendre PRF relation as a stepping
+stone, then we reduce EUF-CMA (existential unforgeability against (adaptive)
+chosen message attacks) to EUF-KO. We define the two security models as fol-
+lows.
+14
+Definition 6 (EUF-KO). Given a security parameter , we say that the signa-
+ture scheme is EUF-KO-secure in the random oracle model if any PPT algorithm
+Ahas negligible advantage in the EUF-KOgame defined as
+AdvEUF-KO
+A = Pr
+Verify (pk, m, ) = 1(sk, pk )KeyGen ()
+(m, ) A(pk)
+Definition 7 (EUF-CMA). Given a security parameter , we say that the
+signature scheme is EUF-CMA-secure in the random oracle model if any PPT al-
+gorithm Ahas negligible advantage in the EUF-CMAgame defined as
+AdvEUF-CMA
+A = PrVerify (pk, m, ) = 1
+m/Q(sk, pk )KeyGen ()
+(m, ) ASign(sk,)(pk)
+where ASign(sk,)denotes As access to a signing oracle with private key sk, and
+Qdenotes the set of messages mthat are queried to the signing oracle by A.
+3.4 Aggregate Signature
+Definition 8 (Syntax). An aggregate signature scheme consists of the follow-
+ing algorithms (Setup ,KeyGen ,Sign,Verify ,Agg,AggVerify ):
+1.Setup ,KeyGen ,Sign,Verify are defined the same as in ordinary signature
+schemes, except that Setup also generates the public parameters for the ag-
+gregate signature scheme.
+2.Agg({i, mi, pki}i[n],pp): On input nsignature, message, public-key
+pairs, where (i, mi, pki)denotes the pair for the i-th signer, and a set of
+public parameters ppgenerated in the Setup phase, the algorithm outputs 
+which is the aggregated signature.
+3.(0/1)AggVerify (, PK, M, pp): On input public parameters pp, the
+aggregated signature ,npublic keys PK = (pk1, . . . , pk n)and messages
+M= (m1, . . . , m n), the algorithm accepts (outputs 1) if the aggregate signa-
+ture is valid against PK andM. Otherwise, the algorithm rejects (outputs
+0).
+We follow the aggregate chosen-key model from [18] for our aggregate signa-
+ture, in which the adversary Ais given a challenge public key and a signing oracle
+with respect to the challenge key. Acan generate other key pairs and attempt to
+forge an aggregate signature. The definition of the aggregate chosen-key game
+GameAggSig
+H,Sign(A, N, q H, qs) as follows.
+Definition 9 (Aggregate Chosen-Key Model [18]). The game contains
+four phases as follows.
+Setup . Define ppto be the public parameters for the signature scheme. The
+adversary Ais given a challenge public key pk1chosen at random and public
+parameters pp.
+15
+Queries . The adversary Awith pk1can make at most qHqueries to the
+random oracle and at most qsqueries to the signing oracle Sign with respect
+topk1on messages of his choice.
+Response .Aoutputs N1distinct public keys pk2, . . . , pk N, a tuple of
+messages m1, . . . , m Nwhere m1was not queried to the signing oracle, and
+an aggregate signature .
+Output . Denote PK={pk1, . . . , pk n}andM={m1, . . . , m n}. The game
+outputs AggVerify (, PK, M ).
+The advantage of the adversary, which is denoted as AdvAggSig
+A , is defined to
+be the probability GameAggSig
+H,Sign(A, N, q H, qs) outputs 1. The aggregate signature
+is secure against any efficient adversary under the aggregate chosen-key model
+ifAdvAggSig
+A (N, qH, qs) is negligible in the security parameter.
+3.5 Interactive Oracle Proof
+Interactive oracle proofs (IOPs) [12], also known as probabilistically checkable
+interactive proofs (PCIPs) [57], generalise interactive proofs (IPs) [37] and prob-
+abilistically checkable proofs (PCPs) [4, 5]. In this paper, we consider only public-
+coin IOP protocols (i.e., the messages from the verifier are sampled uniformly
+at random and are independent from messages sent by the prover).
+Definition 10 (Interactive Oracle Proof (adapted from [12])). An inter-
+active oracle proof system for relation Rwith round complexity k:{0,1}N
+and soundness s:{0,1}[0,1]is a tuple (P,V)where P,Vare probabilistic
+algorithms, that satisfies the following properties.
+1.Completeness. For every (x, w)R,P(x, w), V(x)is ak(x)-round in-
+teractive oracle protocol with accepting probability 1.
+2.Soundness. For every xnot in the language of Rand P,P, V(x)is a
+k(x)-round interactive oracle protocol with accepting probability at most s(x).
+Public-coin IOPs can be complied to non-interactive random oracle proofs
+(NIROPs) using BCS transform [12] which preserves the proof-of-knowledge and
+zero-knowledge properties of the underlying IOP. The soundness of the NIROP
+depends on the (restricted) state-restoration soundness which relates to the stan-
+dard soundness and the round complexity of the IOP protocol.
+3.6 Succinct Non-Interactive Argument of Knowledge (SNARK)
+SNARKs consist of the following three algorithms, which are defined as:
+Definition 11 (Syntax).
+SNARK -ppSNARK -Setup (). On input a security parameter, the algorithm
+outputs a set of public parameters that everyone can access (hence transpar-
+ent).
+16
+SNARKSNARK -P(SNARK -pp, w, x). On input a set of public parameters SNARK -pp
+and a witness-statement pair ( x, w), the algorithm outputs a succinct proof
+SNARK.
+0/1SNARK -V(SNARK -pp, x, SNARK). On input a set of public parameters
+SNARK -pp, a claimed statement xand the proof SNARK, the algorithm outputs
+1(accept) if SNARK is convincing.
+If the SNARK is a preprocessing SNARK (e.g., Fractal [27]), then the protocol
+additionally consists of an indexer algorithm, denoted as SNARK -Indexer , which
+on input an arithmetic circuit, outputs a short ivkand a long ipkfor the SNARK
+verifier and the SNARK prover, respectively.
+A SNARK protocol satisfies correctness and argument of knowledge, which
+are defined in
+Definition 12 (Security Properties).
+1.Completeness . For every ( x, w)R,
+Pr[SNARK -V( x,SNARK -P( x, w))(SNARK -pp) = 1] = 1
+2.Knowledge Soundness . For all PPT adversaries Athere exists a PPT
+extractor Esuch that
+PrSNARK -V(SNARK -pp, x, ) = 1
+( x, w)/R(( x, ); w) A  E (SNARK -pp)
+=negl
+4 Loquat: SNARK-Friendly Post-Quantum Signature
+from the Legendre PRF
+4.1 IOP-based Interactive Key Identification Scheme
+We first present an Interactive Oracle Proof-based key identification scheme
+for the Legendre PRF, which is then compiled into a signature scheme (i.e.,
+Loquat ) using the BCS transform [12].
+Interactive Oracle Proof (IOP) Generally speaking, an (public coin) IOP
+has three phases, interaction phase, query phase, and decision phase that can
+be described as follows. During the interaction phase, the prover and the verifier
+engage in krounds of interaction, where in each round i[k], the verifier sends
+a message mito the prover, who reads in full and responds with oracle messages
+fi, along with a plaintext message pi. The verifier makes point queries to the
+oracle messages, while he/she reads the plaintext message in its entirety.9
+After krounds of interaction, the (public coin) verifier initiates the query
+phase by making queries to the oracle messages ( f1, . . . ,fk) and subsequently
+receives responses ( a1, . . . ,ak). Finally, the verifier decides whether to accept
+or reject the proof, based on the answers ( a1, . . . ,ak), the verifiers messages
+(m1, . . . ,mk), and the plaintext message ( p1, . . . ,pk).
+9Occasionally, the oracle message or the plaintext message may be an empty string.
+17
+Key Identification of the Legendre PRF Fix two integers LandB, where
+Ldenotes the bit length of the Legendre PRF statement, and BLdenotes
+the number of challenged quadratic residuosity symbols. Define a set of publicly
+accessible strings denoted as I= (I1, . . . , I L), which are uniformly selected at
+random from the field Fpfor a large prime p. The prover proceeds to choose
+a random K$F
+pas the PRF private key. It then computes the PRF output
+LK(I) = (LK(I1), . . . ,LK(IL)) {0,1}L. The objective of the prover is to
+convince the verifier that it has knowledge of the -approximate PRF key K
+with respect to the output LK(I).
+Moreover, the prover and the verifier agree on two disjoint multiplicative
+subgroups H, UF, where |H|=Band|U|>|H|. We denote the interactive
+key identification protocol as P(K,LK(I)),V(LK(I)), which uses, as a black-
+box, the zero-knowledge univariate sumcheck protocol PUS(x, w),VUS(x)for the
+relation RUS= (x, w) as shown in Definition 3. We present the IOP-based key
+identification protocol in Algorithm 1.
+Remark 3 (Achieving Zero-Knowledge). Query answers to f1may leak informa-
+tion about the PRF key K. We can employ a similar technique used in Vigro
+[65] to mask the polynomial  c. Let|Q|be the number of queries made by V.
+The prover Prandomly selects  r(x) with degree |Q|, and computes  c(x) =
+c(x) +ZH(x)r(x), where ZH(x) is the vanishing polynomial (i.e., ZH(h) = 0 for
+allhH). The prover Pcomputes the witness oracle as f1= c|U. Note that
+the univariate sumcheck polynomial is now computed as  w(x) = c(x)q(x),
+with degree less than 4 B+|Q|, and the claimed sum =PB
+b=1boBremains
+the same. Consequently, any |Q|queries to f1are randomly distributed, ensuring
+the zero-knowledge property of the key identification protocol.
+Theorem 1. Suppose there exists an IOP protocol PUS(x, w),VUS(x)for the
+univariate sumcheck relation RUS(Definition 3), where x= (F, U, H, d,  )and
+w=fthat is knowledge sound and zero-knowledge with following parameters
+[11]:
+Knowledge error: US=O
+|U|
+|F|
++negl (), where denotes the repetition
+parameter of the low-degree test,
+Proof length: pUS=O(|U|),
+Query complexity: qUS=O(),
+Round complexity: rUS=O(log|U|),
+Prover complexity: tP
+US=O(|U|),
+Verifier complexity: tV
+US=O(log2|H|) +O(log|U|).
+Then, we can construct a public-coin IOP protocol P( w, x),V( x)(Algorithm
+1) where w=Kand x=LK(I)for the -approximate Legendre PRF relation
+RL(Definition 2), assume the black-box access to PUS(x, w),VUS(x). The pro-
+tocol is complete, knowledge sound, and zero-knowledge with following complexity
+parameters.
+Knowledge error: ( x) =US+ (1)B+ 1/p,
+18
+Algorithm 1: IOP-based Key Identification of the Legendre PRF
+1Interactive Phase
+2 Prover Round 1
+3 Randomly pick ( r1, . . . , r B)F
+pand a random polynomial
+r(x)F[X] of degree |Q|.
+4 Compute witness vector c= (Kr1, r1, . . . , Kr B, rB) and witness
+polynomial  c=Interpolate (H,c).
+5 Compute  c(x) = c(x) +ZH(x)r(x), where ZH(x) is the vanishing
+polynomial on set H. //deg(c)2B+|Q|
+6 forb= 1toBdo
+7 Compute Tb=L0(rb).
+8 Send the witness oracle f1= c|Uand plaintext message
+p1= (T1, . . . , T B) toV.
+9 Verifier Round 1
+10 Randomly sample I I, with |I|=Band send m1=ItoP.
+11 Prover Round 2
+12 forb= 1toBdo
+13 Compute ob= (K+Ib)rbforIb I.
+14 Send the plaintext message p2= (o1, . . . , o B) toV. // The
+oracle message in this round is empty.
+15 Verifier Round 2
+16 Randomly samples ( b)b[B]$Fp.
+17 Send m2= (1, . . . ,  B) toP.
+18 Prover Round 3
+19 Compute q= (1, 1I1, . . . ,  B, BIB) and the evaluation
+polynomial  q(x) =Interpolate (H,q). //deg(q)<2B
+20 Compute the polynomial for univariate sumcheck
+w(x) = c(x)q(x). //deg( w)<4B+|Q|
+21 Compute the claimed sum =PB
+b=1bob.
+22 Univariate Sumcheck Round
+23 Invoke PUS(x,w),VUS(x), where x= (F, U, H, 4B+|Q|, ).
+24Query Phase
+25 Vsamples a random set QUand send QtoP, who responds with
+(a1,aUS), where a1[i] =f1[i] fori[Q] and aUSis the query answer
+to oracles generated in the univariate sumcheck.
+26Decision Phase
+27 Voutputs 1 (i.e., accept) if and only if
+1.VUS(x) accepts.
+2. For all b[B],L0(ob) =LK(Ib) +Tbwhere ob= 0 (mod p) and Ib I.
+Otherwise, Voutputs 0 (i.e., reject).
+19
+Proof length: p( x) =|U|  |F|+ (log p+ 1)B+pUS,
+Query complexity q( x) =2+qUS, where denotes the localization pa-
+rameter in the low-degree test,
+Round complexity r( x) = 2 + rUS,
+Prover complexity tP( x) = 2FFT (IFFT (|H|),|U|) +O(logp) +tp
+US,
+Verifier complexity tV( x) =BO(logp) +tV
+US.
+Where FFT denotes the complexity of running one FFT to evaluate the poly-
+nomial and IFFT denotes the complexity of running one IFFT to interpolate
+the polynomial.
+We show a formal proof and analysis for Theorem 1 in Appendix, Section B.1.
+According to [12, Lemma 5.7], an IOP protocol with k( x) rounds of in-
+teraction has (restricted) state-restoration soundness error (knowledge error)
+(b, x) b
+k( x)
+( x), where bdenotes the maximum number of interactions al-
+lowed between the state restoration prover and the verifier. However, the general
+upper bound of the state-restoration soundness is not enough for our key iden-
+tification protocol. We analyze a tighter upper bound of the (restricted) state-
+restoration soundness as shown in Lemma 2, and provide the formal proof in
+Appendix B.2.
+Lemma 2. The restricted state-restoration soundness error (knowledge error)
+of the IOP-based key identification protocol for the Legendre PRF against a
+b-bound malicious prover Pis(b, x) = Pr[ X+Y+Z=B]where X=
+max( X1, . . . , X b1),Y= max( Y1, . . . , Y b2), and Z= max( Z1, . . . , Z b3)such that
+b1+b2+b3b,Xiare i.i.d. as B(B,(1)),Yiare i.i.d. B(BX,1/p), and Zi
+are i.i.d. as B(BXY,  US), where B(,)denotes the binomial distribution.
+Remark 4. Note that the security of the Legendre PRF is well-studied in the
+prime field Fpwhile the univaraite sumcheck works in the extension field F=Fp2.
+To solve the inconsistency between the fields, we will naturally lift the elements
+inFptoFp2for vectors c,q, where Fp2only affects the statistical soundness of
+the univariate sumcheck, and it is independent from the Legendre PRF.
+4.2 Loquat: Post-Quantum Signature Scheme from the Legendre
+PRF
+Loquat (Algorithm 2 - 7) is constructed by applying BCS transform [12] to the
+IOP-based key identification scheme of the Legendre PRF presented in Section
+4.1. Note that in key generation (Algorithm 3), we require K+I= 0 (mod p) for
+enabling efficient residuosity check in SNARK-based applications, which reduces
+the key space from ptopL. This remains secure since Lp.
+We first show the EUF-KO (ROM) security of Loquat in Theorem 2, which
+follows directly from [12, Theorem 7.1]. Then, we prove the EUF-CMA (ROM)
+ofLoquat , using EUF-KO as the stepping stone, in Theorem 3.
+20
+Algorithm 2: Loquat Setup
+Input: Security Parameter 
+Output: Public Parameter L-pp
+1L-Setup
+2 Public Parameters for Legendre PRF
+3 Fp: prime field for sufficiently large p.
+4 LN: the number of bits in the public key.
+5 BN: the number of challenged residuosity symbols and BL.
+6 I={I1, . . . , I L}where I$Fpfor all [L].
+7 m, nN: degree bound and the number of parallel executions
+such that mn=Bwith mbeing a power of 2.
+8 Public Parameters for Univariate Sumcheck and LDT
+9 F=F2
+p: extension field of Fpthat contains large enough smooth
+multiplicative subgroups.
+10 HF: a multiplicative coset with |H|= 2m.
+11 : the localisation parameter of LDT.
+12 : the query repetition parameter of LDT.
+13 U: a smooth multiplicative coset UFsuch that |U|>|H|and
+HU=.
+14 : maximum rate that is the closest power of 2, where
+>4m+2
+|U|.
+15 r=j
+log2(|U|)log2(1/)
+k
+: the round complexity of LDT.
+16 U(1), . . . , U(r):rmultiplicative subgroups where U(0)=U:
+17 fori= 1tordo
+18 forxU(i1)do
+19 y =x2.
+20 U(i).append (y)
+21 H1, . . . ,H5+r,HMT: collision-resistant hash functions.
+22 Expand :FF: an expand function.
+23 Output L-pp:=
+(Fp,F, p, L, B, I, m, n, H, U, (U(k))k[r], , r, , , (Hk)k[5+r],HMT,Expand ).
+21
+Algorithm 3: Loquat Key Generation
+Input: L-pp
+Output: (sk, pk )
+1L-KeyGen
+2 On input public parameters L-pp, the algorithm performs the
+following tasks.
+3 Generate the secret key . Randomly pick a field element
+K$F
+p/{I1, . . . ,IL}and set sk:=K.
+4 Generate the public key . Compute
+pk:=LK(I) = (LK(I1), . . . ,LK(IL)). The bit length of the public
+key is L.
+5 Output ( sk, pk ).
+Remark 5. Decomposing a large polynomial with degree 2 Btonpolynomials
+with degree 2 mintroduces an additional soundness error 1 /|F|owing to randomly
+linear combination of npolynomials for univariate sumcheck. The increment is
+negligible and is not reflected in our proof of Theorem 1 and Lemma 2.
+Theorem 2. LetLoquat be the signature scheme that is constructed in Section
+4.2.Loquat is secure in EUF-KO as defined in Definition 6 under the assumption
+that finding -approximate witnesses for a given public key is hard. Specifically,
+for a given security parameter , if there exists a PPT adversary Athat makes at
+most mqueries to the random oracles with success forgery probability in the EUF-
+KO model , then there exists a PPT algorithm Bwhich, on receive the challenge
+public key pk= (LK(I1), . . . ,LK(IL))for a random key KF
+p, outputs a -
+approximate witness for pkwith probability at least (pk, m )3(m2+1)22,
+where (pk, m )is the restricted state-restoration soundness of the IOP-based key
+identification scheme defined in Lemma 2.
+Proof. The proof of Theorem 2 is same as the proof of [12, Theorem 7.1]. Namely,
+the restricted state restoration soundness (knowledge) error  (pk, m ) is the error
+probability of Aforges a signature by successfully cheating on the protocol, which
+is negligible with appropriate parameters. (3( m2+1)2) is the probability that
+Baborts in the IOP protocol owing to collisions, as analyzed in [12].  
+Theorem 3. Assume that H1is modeled as a random oracle. Then, if there
+exists an adversary Athat wins the EUF-CMA security game with advantage
+, then there exists an adversary Bwith a run-time within a constant factor
+of the run-time of Awins the EUF-KO security game with probability at least
+(qs(qs+qH1))22by making at most qH1random oracle queries and at
+most qssigning oracle queries.
+The security proof of Theorem 3 is shown in Appendix B.3. To enable
+SNARK-based applications, we define Loquat in the URS model by heuris-
+tically instantiating the random oracle via cryptographic hash functions (see
+22
+Algorithm 4: Loquat Sign (Part I)
+Input: Public parameter L-pp, secret key sk, and message M
+Output: Signature 
+1L-Sign
+2 Phase 1. Commit to secret key and randomness
+3 forj= 1tondo
+4 Randomly pick ( r1,j, . . . , r m,j)$F
+p.
+5 fori= 1tomdo
+6 Compute Ti,j L 0(ri,j).
+7 Assign cj(Kr1,j, r1,j, . . . , Kr m,j, rm,j)F2m
+pand lift cjto
+F2m.
+8 cj(x)Interpolate (H,cj). //cjF[X]anddeg(cj)<2m
+9 Randomly sample  r(x)F[X] with degree 2.
+10 Compute  c
+j(x)cj(x) +ZH(x)r(x).//deg(c
+j)<2m+2
+11 fore= 1to|U|do
+12 leaf e=Hc(c
+1(U[e]), . . . , c
+n(U[e]))
+13 Commit to leaf = (leaf 1, . . . , leaf|U|):
+root cMT.Commit (leaf).
+14 Set1(root c,(T1,j, . . . , T m,j)j[n]).
+15 Phase 2. Compute residuosity symbols
+16 Compute h1 H 1(1, M) and
+(I1,j, . . . , I m,j)j[n]Expand (h1), where Ii,j I.
+17 fori= 1tomdo
+18 forj= 1tondo
+19 Compute oi,j(K+Ii,j)ri,j.
+20 Set2(o1,j, . . . , o m,j)j[n].
+21 Phase 3. Compute witness vector for univariate sumcheck
+22 Compute h2 H 2(2, h1) and
+((1,j, . . . ,  m,j), j)j[n]Expand (h2), where i,jFpand
+jF.
+23 forj= 1tondo
+24 Assign qj(1,j, 1,jI1,j, . . . ,  m,j, m,jIm,j)F2m
+pand lift
+qjtoF2m.
+25 qj(x)Interpolate (H,qj). //qjF[X]anddeg(qj)<2m
+26 Define fj(x)c
+j(x)qj(x). //deg( fj)<4m+2
+27 Define f(x) =Pn
+j=1jfj(x) //deg( f) = deg( fj)<4m+2
+28 Execute the (non-interactive) zero-knowledge univaraite
+sumcheck protocol with respect to
+((F, U, H, 4m+2, ),f(x)), where Fis lifted fromPn
+j=1j(Pm
+i=1i,joi,j). Obtain partial signature US.
+29 Output the signature := ((Ti,j, oi,j)i[m],j[n], US, LDT).
+23
+Algorithm 5: Loquat Sign (Part II) - Univariate Sumcheck
+1L-Sign - Part II
+2 Phase 3 (contd). Enable ZK of Univariate Sumcheck
+3 Randomly sample  s(x) with degree 4 m+21.
+4 Compute SP
+aHs(a).
+5 Commit root sMT.Commit (s|U).
+6 Set3(root s, S).
+7 Phase 4. Univariate Sumcheck
+8 Compute h3 H 3(3, h2) and zExpand (h3).
+9 Define f=zf(x) + s(x). //deg( f)<4m+2
+10 Compute  g(x) and h(x) such that f(x) = g(x) +ZH(x)h(x).
+//deg(g)<2manddeg(h)<2m+2
+11 Commit root hMT.Commit (h|U).
+12 Set4(root h).
+13 Phase 5. Stacking Codeword for LDT
+14 Compute h4 H 4(4, h3) and eExpand (h4), where eF8.
+15 Define rational constraint  p(x) =|H|f|H|ZH(x)h(x)(z+S)
+|H|x.
+//deg(p)<2m1
+16 Stack vertically  c|U,s|U,h|U,p|U, denote the resulting matrix as
+0F4|U|.
+17 Define 1=2m+2+1
+|U|,2=4m+2
+|U|,3=2m+2
+|U|, and
+4=2m1
+|U|.
+18 fori= 1to4do
+19 Compute ( 1)i,y=y(i)|U|(0)i,y.
+20 Obtain = 0
+1
+F8|U|.
+21 Compute f(0)esuch that f(0)RS[U, ].
+24
+Algorithm 6: Loquat Sign (Part III) - Low-Degree Test
+1L-Sign - Part III
+2 Phase 6. LDT Folding
+3 Define l(x) =x2and denote U(0)=U.
+4 fori= 0tordo
+5 Compute rootf(i)MT.Commit (f(i)).
+6 Define 5+irootf(i)andh5+i H 5+i(5+i, h4+i).
+x(i)Expand (h5+i), where x(i)F.
+7 foryU(i+1)do
+8 Define S(i)
+y={xU(i)|l(x) =y} //S(i)
+yis the
+multiplicative coset of U(i)with|S(i)
+y|= 2
+9 SetP(i)
+y(x) =Interpolate (S(i)
+y,f(i)|S(i)
+y) //P(i)
+y(x)
+agrees with f(i)on the multiplicative coset S(i)
+yand
+deg( P(i)
+y) = 21
+10 f(i+1).append (P(i)
+y(x(0)))
+11 ifi+ 1 = rthen
+12 Letf(r)=f(i+1)be defined in previous steps, and
+f(r)(x) =Interpolate (U(r),f(r)).
+13 Letd= |U(r)| 1
+14 Commits to the first d+ 1 coefficients a= (a0, . . . , a d) of
+f(r)(x):h5+r H 5+r(a, h4+r).
+15 End the iteration
+16 else
+17 Continue the iteration with f(i+1).
+18 Phase 7. LDT Query
+19 Compute ( S1, . . . , S )Expand (h5+r), where |Sj|= 2and
+SjU(0)such that there exists a yU(1),l(s) =yfor all
+sSj.
+20 Reveal leaf nodes for trees root c,root s,root h, denote the query
+answers, corresponding Merkle roots, and auxiliary information
+in univariate sumcheck as US.
+21 fori= 1tor1do
+22 Reveal (21) leaves for f(i). // Using 2query
+answers of f(i1)can compute leaves of f(i). Then,
+reveal the remaining leaves in the same coset would be
+enough
+23 Denote the query answers as LDT.
+24 Append coefficients aoff(r)Merkle roots
+rootf(0), . . . , rootf(r1)in LDT phase to LDT.
+25 The signature := ((Ti,j, oi,j)i[m],j[n], US, LDT).
+25
+Algorithm 7: Loquat Verify
+Input: Signature , public key pk, and message M
+Output: 0/1
+1L-Verify
+2 Step 1. Recompute Challenges
+3 There exists a hash chain from the beginning to the end of the
+signature protocol, where the verifier first obtains all Merkle
+roots and plaintext messages from the signature, then computes
+the hash output round-by-round. It then expand each rounds
+hash output to obtain corresponding challenges if required.
+4 Step 2. Recompute Leaf Nodes
+5 forj= 1tondo
+6 Define qj(1,j, 1,jI1,j, . . . ,  m,j, m,jIm,j)F2m
+pand lift
+qjtoF2m.
+7 qj(x)Interpolate (H,qj).
+8 Define fj(x)c
+j(x)qj(x).
+9 forsQdo
+10 Recompute ( qj(s))j[n]. //Qbeing the query set
+11 Recompute fj(s)c
+j(s)qj(s) and f(s) =Pn
+j=1jf(
+js).
+12 Recompute  p(s) =|H|(zf(s)+s(s))|H|ZH(s)h(s)(z+S)
+|H|s, where
+Fis lifted fromPn
+j=1j(Pm
+i=1i,joi,j).
+13 Recompute f(0)(s). // By reconstructing the interleaved
+code and takes the random linear combination
+14 Step 3. Checking Proofs
+15 fori[m], j[n]do
+16 ifoi,j= 0 L0(oi,j)=pkIi,j+Ti,jthen
+17 Reject the signature with output 0.
+18 If there exists any authentication path that is not a valid opening
+of the Merkle commitment, reject and output 0.
+19 If the low-degree test is inconsistent, reject and output 0.
+20 Otherwise, accept and output 1.
+26
+Remark 1). It is worth noting that the security of Loquat public-private keys
+depends on the security of the Legendre PRF (analyzed in Appendix A), while
+the EUF-KO and EUF-CMA security of Loquat solely rely on collision-resistant
+hash functions.
+Definition 13 (Loquat in the URS model). Given a security parameter ,
+Loquat in the URS model satisfies following security properties.
+Correctness. For any message m,
+Pr
+Verify (urs, pk, m,  ) = 1urs {0,1}poly()
+(sk, pk )KeyGen (urs)
+Sign (urs, sk, m )
+= 1
+EUF-CMA. For any PPT adversary A, it has negligible advantage in the
+EUF-CMAgame defined as:
+AdvEUF-CMA
+A = Pr
+Verify (urs, pk, m, ) = 1
+m/Qurs {0,1}poly()
+(sk, pk )KeyGen (urs)
+(m, ) ASign(urs,sk,)
+
+where ASign(urs,sk,)denotes As access to a signing oracle with private key
+skandQdenotes the set of messages mthat were queried to the signing
+oracle by A.
+4.3 Optimizing Loquat Protocol for SNARK-based Applications
+We commence this section by presenting several improvements aimed at mini-
+mizing the R1CS complexity of the verification algorithm of Loquat .
+Decomposing Large Polynomials. We leverage the modular design of our
+key identification scheme to decompose large polynomials, which enables the
+univariate sumcheck to work on a smaller amortised polynomial.
+Specifically, let mandnbe two integers such that mn=B, with m
+being a power of 2. For j[n], the prover computes the witness polyno-
+mial fj(x1,j, y1,j, . . . , x m,j, ymj) =Kr1,jx1,j+r1,jx1,jy1,j++Krm,jxm,j+
+rm,jxm,jym,j. Note that each fjhas 2mcoefficients where m=B/n. The decom-
+position step does not influence the soundness as the total number of residuosity
+symbols being checked is still B.
+Nonetheless, running nzkVPD protocols concurrently on small polynomials
+does not yield efficiency improvements. To reduce the number of zkVPD proto-
+cols, we explore the amortisation property of univariate sumcheck [11, Section
+5.2], wherein nunivariate sumchecks relations can be amortised through random
+linear combinations (with additional soundness error of 1 /|F|).
+27
+Efficient Verification of Quadratic Residuosity. Recall that to verify e
+for (e[N]), the SNARK prover needs to prove, in the circuit, that for all
+i[m], j[n],L0(o(e)
+i,j) =pk(e)
+Ii,j+T(e)
+i,j. Notably, computing Legendre PRF in
+the circuit can be relatively expensive. To circumvent the problem, we let the
+SNARK prover perform the following tasks outside of the circuit .
+1. For the Loquat signature e= (. . . ,(o(e)
+i,j)i[m],j[n], . . .), the SNARK prover
+computes L0(o(e)
+i,j). There are two possible outputs 0 or 1 implying that o(e)
+i,j
+is a quadratic residue (QR) or quadratic non-residue (QNR) modulo p.
+(a) If L0(o(e)
+i,j) = 0, then either o(e)
+i,j= 0 (this case is avoided by checking if
+o(e)
+i,jis a non-zero element), or o(e)
+i,jis a QR. Then, the SNARK prover
+can find a s(e)
+i,jFpsuch that ( s(e)
+i,j)2=o(e)
+i,j(actually s(e)
+i,jands(e)
+i,jare
+both candidates that can be squared to o(e)
+i,j, here we let the SNARK
+prover pick the smallest s(e)
+i,j).
+(b) If L0(o(e)
+i,j) = 1, then o(e)
+i,jmust be a QNR. Then, we let the SNARK
+prover compute t(e)
+i,j=o(e)
+i,jfor some fixed QNR that is defined in
+public parameters. Thus, t(e)
+i,jis a QR, which implies that there exists a
+corresponding s(e)
+i,jsuch that ( s(e)
+i,j)2=t(e)
+i,j.
+2. After finding s(e)= (s(e)
+i,j)i[m],j[n], the SNARK prover obtains 
+eby ap-
+pending s(e)toe.
+The witness is then defined as w= (
+1, . . . , 
+N).
+To prevent the SNARK prover cheating on s(e)
+i,j, we let it prove in the circuit
+thats(e)
+i,js(e)
+i,j=t(e)
+i,j, where (also in the circuit) t(e)
+i,j=o(e)
+i,j((pk(e)
+Ii,j+T(e)
+i,j) +
+(1(pk(e)
+Ii,j+T(e)
+i,j))) for all e[N],i[m], j[n]. Note that the SNARK
+prover can always check the validity of the Loquat signature before proving the
+validity of Loquat to prevent DoS attack. Therefore, if it holds true that for all
+b[B],L0(ob) =pkIb+Tb, we can find the square root sboftband prove in the
+circuit that tb=sbsb(mod p). It is worth emphasising that the computation
+ofsbvalues can be done outside of the circuit. Consequently, the total number
+of constraints required to verify the quadratic residuosity of obis 4B+ 1.
+Hash by Subset and Tree Cap. Since the answers to the queries for low-
+degree test involve 2leaf nodes, instead of treat each element as an individual
+leaf node, the prover can hash 2elements and use the single element as the
+Merkle leaf. This reduces the number of leaves for each Merkle tree by a factor
+of 2. Furthermore, by the pigenhole principle, any set of authentication paths
+must overlap towards the top of the tree. To take advantage of this, we modify
+the Merkle tree by hashing the nodes in layer ttogether to form the root, instead
+of computing the tree.
+28
+5 Applications of Loquat
+5.1 ID-based Ring Signature
+Buser et al. [23] introduced an ID-based ring signature whose security solely relies
+on symmetric-key primitives. In this scheme, the Public Key Generator (PKG)
+initiates the process by generating a master public-private key pair using the
+key generation algorithm of a post-quantum signature scheme. A user wishing
+to register sends their ID (i.e., the public key) to the PKG, which signs this ID
+with its master private key, and returns the signature to the user to serve as
+their signing key. To construct an ID-based ring signature, a user undertakes the
+following steps:
+1. The user selects n1 IDs and inserts their own ID at a random position to
+form a ring of size nwith the users index denoted by .
+2. The user accumulates nIDs using a Merkle tree and records the root.
+3. Subsequently, the user produces a Non-Interactive Zero-Knowledge Proof of
+Knowledge (NIZKPoK) demonstrating that:
+There exists a valid signing key with respect to IDin the ring. In other
+words, the user proves that there exists a valid signature of IDunder
+the master public key.
+IDis accumulated in the Merkle tree.
+The unforgeability is guaranteed by the (knowledge) soundness while the anonymity
+is ensured by the zero-knowledge property of the employed NIZKPoK protocol.
+By adopting Ligero++ [17] as the underlying NOIZKPoK, the ID-based ring
+signature has size ranging between 0.885 and 1.898 MB for rings containing 26
+members.
+The original proposal highlighted two symmetric-key primitives based signa-
+ture schemes for PKG: XMSS [22] and Picnic [64]. Their analysis showed that
+verifying an XMSS signature requires 685 hash function calls, whereas a Picnic
+signature verification demands 7,008 hash function calls and 2,680,560 multi-
+plication gates. As discussed earlier (Section 1.1), employing zero-knowledge
+protocols to prove signature validity mandates substituting the hash function
+with algebraic alternatives due to the prohibitively large number of constraints
+associated with standard hash functions. Unfortunately, such a substitution sig-
+nificantly extends the key generation time of XMSS, particularly for large tree
+size. In the case of Picnic, the scheme is burdened with an excessively high num-
+ber of R1CS constraints. Compared to these schemes, Loquat appears as the
+optimal solution for the PKG in the proposed ID-based ring signature frame-
+work.
+5.2 SNARK-based Aggregate Signature
+We assume there exists a SNARK protocol with post-quantum security and
+transparent setup (e.g., [2, 11, 17, 27]) denoted as SNARK. The definition of
+SNARKs can be found in Section 3.6.
+29
+The aggregator computes SNARK =SNARK -P(SNARK -pp, w, x) which states the
+validity of all signatures being aggregated. We define the aggregate signature
+scheme that consists of the following six algorithms, where the setup algorithm
+AggSetup is shown in Algorithm 8, while ( KeyGen ,Sign,Verify ) are defined
+the same as Loquat (Section 4.2). Algorithm 9 presents both Agg(aggregate
+signature generation) and AggVerify (aggregate signature verification).
+Algorithm 8: Aggregate Signature (Transparent) Setup
+Input: Security parameter 
+Output: A-pp
+1AggSetup
+2 Fix a QNR Fp.
+3 Generate public parameters for Loquat :L-ppL-Setup () and
+public parameters for the SNARK protocol:
+SNARK -ppSNARK -Setup ().
+4 Output A-pp= (,L-pp,SNARK -pp).
+Theorem 4. LetAbe the aggregate signature protocol shown in Algorithm 9.
+Assume that the knowledge error, eSNARK, of the SNARK protocol used by A
+is negligible (in the random oracle model). If there exists an Athat wins the
+aggregate chosen-key security game (Definition 9) with advantage , then there
+exists a PPT adversary B, who runs in time t+qstL-Sign+tSNARK, that breaks the
+unforgeability of Loquat in the URS model with probability at least eSNARK
+while making at most qsqueries to the signing oracle of Loquat in the URS
+model. We denote tas the running time of A,tL-Signas the running time of
+the signing oracle of Loquat , and tSNARK as the running time of the SNARK
+extractor ESNARK.
+The security proof of Theorem 4 is presented in Appendix B.4.
+SNARK-based Aggregate Signature with Proof Recursion Given the
+black-box access to a SNARK protocol with succinct verification (i.e., the num-
+ber of R1CS constraints to represent the SNARK verifier is less than the R1CS
+constraints that the SNARK verifier checks), we can construct an aggregate sig-
+nature using SNARK proof recursive composition . The setup phase is the same
+as Algorithm 8, while AggandAggVerify with proof recursion is shown in Algo-
+rithm 10 and 11. Note that we omit the indexer step if the underlying SNARK
+is a preprocessing SNARK for the sake of simplicity.
+Theorem 5. Let
+Abe the aggregate signature protocol shown in Algorithm 10.
+Assume the knowledge error of the SNARK protocol with succinct verification is
+eSNARK, which is negligible (in the URS model). If there exists an adversary Athat
+30
+Algorithm 9: Aggregate Signature Generation and Verification
+1Agg
+Input: Public parameters A-pp, arithmetic circuit of signature
+verification algorithm C, signatures to be aggregated
+{(e, Me, pke)}e[N]
+Output: 
+2 Step 1. Prepare square roots (outside of the circuit)
+3 fore= 1toNdo
+4 fori[m], j[n]do
+5 ifL0(o(e)
+i,j) = 0 then
+6 Define the smallest s(e)
+i,jsuch that ( s(e)
+i,j)2=o(e)
+i,j.
+7 else
+8 Define the smallest s(e)
+i,jsuch that ( s(e)
+i,j)2=o(e)
+i,j.
+9 Define 
+e= (e,(s(e)
+i,j)i[m],j[n]).
+10 Step 2. Define witness and statement for SNARK prover
+11 Define w= (
+1, . . . , 
+N) and
+x= (CN,(M1, pk1), . . . , (MN, pkN)), where CNdenotes the
+concatenation of Ncircuits with multiplication gates.
+12 Step 3. Construct SNARK proof
+13 Obtain SNARK = (SNARK -pp, w, x) and set = (SNARK, o), where
+o=Qn
+i=1QB
+b=1o(e)
+i,j
+is computed in the circuit.
+14 Output .
+15Verify
+Input: Public parameters A-pp, arithmetic circuit of signature
+verification algorithm C, an aggregate signature , and a list
+of message, public key pairs (( M1, pk1), . . . , (MN, pkN)).
+Output: 0/1
+16 Step 1. Check zero
+17 Parse = (SNARK, o). Ifo= 0, then reject and output 0.
+18 Step 2. Prepare the statement
+19 Define x= (C,(M1, pk1), . . . , (MN, pkN)).
+20 3. Verify SNARK proof
+21 Compute bSNARK -V(SNARK -pp, , x).
+22 Output b.
+31
+Algorithm 10: Aggregate Signature Generation
+Input: A-pp,C,{(e, Me, pke)}e[N]
+Output: 
+1Agg
+2 On input a set of public parameters A-pp, an R1CS instance Cthat
+represents the arithmetic circuit of the Loquat verification for s
+signatures, and a list of signature, message, public key pairs
+{(e, me, pke)}e[N], the algorithm performs the following tasks.
+3 Step 1. Split the Inputs.
+4 Split Nsignatures into chunks ( 1, . . . ,  ) such that:
+5 fork= 1todo
+6 ifk= 1then
+7 |k|  |C|> T
+8 else
+9 |k|  |C|+Rk1> T
+10 where Tdenotes the recursion threshold.
+11 Denote each chunk of the message public key pairs as ( M, PK )k,
+and the circuit for verifying each chunck of circuit as Ckfor
+k[].
+12 Step 2. Prepare Square roots (Outside of the Circuit).
+13 Same as in Algorithm 9.
+14 Step 3. First Aggregation
+15 Define w1=1and x1= (C1,(M, PK )1).
+16 Compute 1=SNARK -P(SNARK -pp, w1, x1).
+17 4. Recursive Aggregation
+18 fork= 2todo
+19 Define w= (k, k1) and
+x= ((Ck,Rk1),((M, PK )k), xk1)), where Rk1denotes
+the circuit presentation of the ( k1)-th SNARK verifier:
+SNARK -V(SNARK -pp, k1, xk1)).
+20 Compute k=SNARK -P(SNARK -pp, wk, xk).
+21 Define = (, o) and output .
+32
+Algorithm 11: Aggregate Signature Verification
+Input: A-pp, ,C,{(Me, pke)}e[N]
+Output: 0/1
+1Verify
+2 On input a set of public parameters A-pp, an aggregate signature ,
+an R1CS instance represents the Loquat verifier, and a list of
+message, public key pairs (( M1, pk1), . . . , (MN, pkN)), the algorithm
+does the following.
+3 Step 1. Check Zero
+4 Parse = (, o).
+5 Ifo= 0, then reject and output 0.
+6 Step 2. Prepare the statement
+7 Define x= ((C,R),(M1, pk1), . . . , (MN, pkN)).
+8 2. Verify SNARK proof
+9 Compute bSNARK -V(SNARK -pp, , x).
+10 Output b.
+wins the aggregate chosen-key security game (Definition 9), then there exists a
+PPT adversary B, who runs in time t+qstL-Sign+ktSNARK, that breaks the
+unforgeability of Loquat in the URS model with probability at least keSNARK,
+while making at most qsqueries to the signing oracle of Loquat in the URS
+model. We denote tas the running time of A,tL-Signas the running time of the
+signing oracle of Loquat ,tSNARK as the running time of the SNARK extractor
+ESNARK, and kas the total number of the recursion.
+The proof of Theorem 5 is shown in Appendix B.5.
+6 Evaluation
+6.1 Choice of Parameters
+Choice of the field. We choose a prime field such that finding the -approximate
+witness for the Legendre PRF relation is hard. In particular, we follow the choice
+in LegRoast [16] to set p= 21271. This allows for 128-bit security level for
+the Legendre PRF. The corresponding field choice of univariate sumcheck and
+low-degree test is Fp2, which contains sufficiently large smooth multiplicative
+subgroup for the code domain U. We note that a smaller extension field such
+asFq2forq= 2611 can achieve 100+ bit security [65]. However, owing to
+the field inconsistency problem, we can only choose Fp2that enables simple and
+efficient field lifting.
+Choice of parameters for relaxed Legendre PRF relation. In order to
+make sure -approximate Legendre PRF relation is as hard as Legendre PRF
+33
+relation, we need to choose Landsuch that 2 pPr[B(L,1/2 + 1/p+ 2/p)>
+(1)L]2, where B(,) denotes the binomial distribution [16]. Since
+p= 21271 and for = 128, we can roughly re-write the inequality so that
+Pr[B(L,1/2 + 1 /p+ 2/p)>(1)L]2128. In the binomial distribu-
+tion, the winning probability is dominated by 1 /2, thus, the inequality becomes
+Pr[B(L,1/2)>(1)L]2128. Then, following cumulative distribution func-
+tion, Pr[ B(L,1/2)>(1)L] = 1 P(1)L
+i=0 L
+i
+ 1
+2L
+. We observe that
+with the same choice of = 0.449 and L= 32768 = 215as in LegRoast, the
+inequality holds. This implies our choice of B= 128 for 128-bit security. For the
+choice of mandnsuch that mn=B, the lower bound on mis 16 since LDT
+must run on polynomials with degree larger than 16.
+Choice of parameters for univariate sumcheck and low-degree test. We
+set the maximum code rate to = 1/16 and explore various query complexi-
+ties in low-degree testing, tailored to the desired security level. Drawing from the
+soundness conjecture proposed in FRI [8, Conjecture 1.5], we introduce Loquat ,
+which rejects codes that maximally deviate from the desired code rate (a prop-
+erty holds with high probability for random code). Additionally, we present Lo-
+quat *, which builds upon the proven soundness bounds of FRI, as detailed in
+[10, Theorem 8.2]. Loquat * can be considered as a more conservative approach
+compared to Loquat . For both protocols, performance evaluations at security
+levels of 80, 100, and 128 are provided, as illustrated in Table 3.
+6.2 Performance of Loquat
+In our implementation of Loquat , we offer two options for hash functions:
+the standard SHA3-256 and SHAKE-128, as well as the algebraic hash func-
+tion Griffin [39]. For Griffin, we opt for a state size of 4 for compression and 3
+for expansion, both configurations featuring a capacity of 2. Notably, the time
+required for key generation remains constant at 0.1 seconds, regardless of the
+selected security level or hash function. The setup time varies depending on the
+hash function choice: utilising standard hash functions results in a setup time of
+0.35 seconds, whereas using the algebraic hash function Griffin extends the setup
+time to 1.34 seconds. Our implementation leverages Python and the Sagemath
+library. All performance benchmarks were conducted on a 2021 MacBook Pro
+equipped with an M1 Max chip and 32GB of RAM using a single thread.
+Given our choice of Griffin parameters, the R1CS constraints for each com-
+pression permutation are 110, while the constraints for each expansion permu-
+tation are 88. We primarily consider Loquat with the conjectured security of
+low-degree testing for computing R1CS constraints. Specifically, verifying a sin-
+gleLoquat -80 signature requires 102,089 R1CS constraints, approximately 3.5
+times larger than a SHA256 circuit. Among these, 95,480 constraints stem from
+evaluating hash functions, while the remaining 6,609 arise from algebraic opera-
+tions. In Fig. 1, we show the required R1CS constraints for verifying Loquat-100
+34
+Security Level ||(KB) tP(s) tV(s) Hash
+Loquat -80 20 37 4.64 0.16
+SHA/SHAKE Loquat -100 25 46 4.77 0.19
+Loquat -128 32 57 5.04 0.21
+Loquat -80 20 37 104 7.40
+Griffin Loquat -100 25 46 105 9.15
+Loquat -128 32 57 105 11
+Loquat *-80 40 75 11.51 0.27
+SHA/SHAKE Loquat *-100 50 90 12.08 0.31
+Loquat *-128 64 114 13.22 0.37
+Loquat *-80 40 75 209 15
+Griffin Loquat *-100 50 90 210 18
+Loquat *-128 64 114 214 25
+Table 3. Performance Evaluation of Loquat .is the query complexity, ||is the
+signature size, tPandtVare the proving and verification times, respectively.
+signatures as an example. Detailed analysis of the R1CS constraints can be found
+in Appendix C.
+6.3 Performance of Loquat in ID-based Ring Signature
+We compare Loquat with the of these three schemes in Table 4. To ensure a
+fair comparison, the R1CS constraints for Loquat -100 are calculated using the
+Poseidon [41] hash function with 600 constraints per permutation, as employed
+in the original paper.
+Sig tKG(s)|SID|(KB) R1CS Max N||(MB) (est.)
+N= 26N= 212N= 220
+Picnic [64] 0 167 6.88M unli. 1.898 1.899 1.900
+XMSS [22] 3355 4.899 431,480 2200.885 0.889 0.893
+Loquat-100 0.1 46 648,549 unli. 0.973 0.977 0.982
+Table 4. Instantiate IDRS [23] with Various Signatures. tKG= Master Key Generation
+Time, |SID|= User Signing Key Size, N= ring size, ||= ID-based Ring Signature
+Size.
+6.4 Performance of SNARK-based Aggregate Signature
+The performance of our aggregate signature varies depending on the underlying
+SNARKs. For instance, with the state-of-the-art transparent SNARK named
+35
+Fig. 1. R1CS Constraints for Verifying Loquat Signatures
+Ligero++ [17], proving 27SHA256 functions (equal to aggregate 35 Loquat -
+100 signatures) takes approximately 100 seconds for proving and 15 seconds for
+verifying, with a proof size of 158 KB, as reported in the original Ligero++ paper.
+We further instantiate the underlying SNARK with Aurora [11] and Fractal
+[27] and utilize the open-source implementation in libiop [1] to evaluate the
+performance. All tests are done locally on a Virtual Machine with 28GB memory
+restrictions.
+Aurora Fractal Fractal-R (est.)
+n= 4 816 32 64 4 816 4 8 16 32
+tI(s) - - - - -33 88218 5K 13K 32K 32K
+tP(s) 14 33 67160 553 119 251 556 3K 6K 14K 14K
+tV(s) 2.4 4.3 10 20 62 0.20.47 0.78 2.4 5.64 9.6 9.6
+||(KB) 126 137 182 197 207 131 140 145 131 140 145 145
+Table 5. Performance of Aggregating Loquat Using Aurora, Fractal, and Recursive
+Fractal (Fractal-R). tI= indexer time, tP= proving time, tV= verification time, n=
+the number of signatures being aggregated.
+We compare the aggregate signature with OTS/STARK [50] and Chipmunk
+[33], the most related work with ours. To facilitate comparison, we will make
+the following assumption: the performances of the Aurora-based and Fractal-
+based aggregate signature schemes follow the asymptotic result. This assumption
+36
+enables us to extrapolate the existing performance results and make a meaningful
+comparison.
+OTS/STARK Chipmunk Loquat/A Loquat/FR
+n=
+1281024 128 1024 128 1024 128 1024
+tI(s) - - - - - - 32K 32K
+tP(s) 2.5 19.7 - 0.57 796 7K 14K 14K
+tV(s) - - - 0.0077 61 487 9.6 9.6
+||(KB) 68 83 - 118 212 235 145 145
+Table 6. Comparison between Various Aggregate/Multi- Signature Schemes. tI=
+indexer time, tP= proving time, tV= verification time, n= the number of signatures
+being aggregated.
+We address that the comparison between our aggregate signature and the
+OTS/STARK [50] is not entirely apples-to-apples, given that one-time signatures
+do not adhere to the standard definition of signatures, and the task of constant
+key updating can be challenging to implement in real-world applications. Fur-
+thermore, Chipmunk is a multi-signature scheme that can be seen as a special
+type of the aggregate signature, where the signers are limited to sign on the same
+message. While an aggregate signature can function as a multi-signature, the re-
+verse is not true. Although our aggregate signatures performance may not sur-
+pass existing solutions, it benefits from distinct security assumptions compared
+to Chipmunk and offers flexibility for signers to endorse distinct messages.
+However, as demonstrated in Table 5 and 6, the practicality of our SNARK-
+based aggregate signatures is limited to scenarios involving a small number of
+signatures. These scenarios have certain real-world applications. For example, in
+a public key infrastructure, users signatures are often accompanied by a chain of
+ncertificates. Since ntends to be relatively small, aggregating these signatures
+can reduce the storage requirement in the user end. Similarly, in the secure BGP
+protocol, routers receive a list of nsignatures verifying a specific network path.
+Here, an aggregate signature scheme could effectively decrease the bandwidth
+usage.
+7 Conclusion
+In this paper, we presented Loquat , a post-quantum signature scheme based
+on the Legendre PRF. We demonstrated a novel protocol design method which
+reduces the task of designing key identification protocol for the Legendre PRF
+to the task of designing multivariate polynomial commitment, a commitment
+scheme that can be constructed using univariate sumcheck [11]. Our method
+results in a SNARK-friendly signature scheme that can be applied in SNARK-
+37
+based applications such as ID-based ring signatures [23] and SNARK-based ag-
+gregate signatures.
+Future Work We propose the following interesting directions for future works:
+1. The signature size and signing/verification time can be improved by replac-
+ing the Legendre PRF with more generalized power-residue PRFs. However,
+the efficient circuit evaluation of the Legendre PRF presented in Section 4.3
+cannot be naively applied to power-residue PRFs.
+2. The SNARK-based aggregate signature proposed in this paper is rather
+generic. Tailoring the SNARK for faster Loquat aggregation is also an in-
+teresting direction for future work.
+3. Applying more efficient low-degree tests, such as STIR [3], to replace FRI
+[8] in Loquat could potentially lead to better signature sizes. We leave this
+as future work.
+Acknowledgement.
+We sincerely thank Veronika Kuchta and Raphael Phan for their help with the
+early draft of this paper. We also wish to express our gratitude to the anonymous
+reviewers for their invaluable feedback, which greatly helped improve this pa-
+per. This paper is supported by Australian Research Council (ARC) Discovery
+Projects DP18180102199 and DP220101234.
+References
+1. libiop. https://github.com/scipr-lab/libiop (2014)
+2. Ames, S., Hazay, C., Ishai, Y., Venkitasubramaniam, M.: Ligero: Lightweight sub-
+linear arguments without a trusted setup. In: Proceedings of the 2017 ACM CCS.
+pp. 20872104 (2017)
+3. Arnon, G., Chiesa, A., Fenzi, G., Yogev, E.: Stir: Reedsolomon proximity testing
+with fewer queries. Cryptology ePrint Archive (2024)
+4. Arora, S., Safra, S.: Probabilistic checking of proofs: A new characterization of np.
+JACM 45(1), 70122 (1998)
+5. Babai, L., Fortnow, L., Levin, L.A., Szegedy, M.: Checking computations in poly-
+logarithmic time. In: Proceedings of the twenty-third annual ACM ToC. pp. 2132
+(1991)
+6. Baum, C., de Saint Guilhem, C.D., Kales, D., Orsini, E., Scholl, P., Zaverucha, G.:
+Banquet: Short and fast signatures from aes. In: PKC. pp. 266297 (2021)
+7. Belling, A., Soleimanian, A., B egassat, O.: Recursion over public-coin interactive
+proof systems; faster hash verification. In: Proceedings of the 2023 ACM SIGSAC
+Conference on Computer and Communications Security. pp. 14221436 (2023)
+8. Ben-Sasson, E., Bentov, I., Horesh, Y., Riabzev, M.: Fast reed-solomon interactive
+oracle proofs of proximity. In: 45th icalp. Schloss Dagstuhl-Leibniz-Zentrum fuer
+Informatik (2018)
+9. Ben-Sasson, E., Bentov, I., Horesh, Y., Riabzev, M.: Scalable, transparent, and
+post-quantum secure computational integrity. Cryptology ePrint Archive (2018)
+38
+10. Ben-Sasson, E., Carmon, D., Ishai, Y., Kopparty, S., Saraf, S.: Proximity gaps for
+reedsolomon codes. Journal of the ACM (2023)
+11. Ben-Sasson, E., Chiesa, A., Riabzev, M., Spooner, N., Virza, M., Ward, N.P.: Au-
+rora: Transparent succinct arguments for r1cs. In: Eurocrypt. pp. 103128. Springer
+(2019)
+12. Ben-Sasson, E., Chiesa, A., Spooner, N.: Interactive oracle proofs. In: TCC. pp.
+3160. Springer (2016)
+13. Bernstein, D.J., Hopwood, D., H ulsing, A., Lange, T., Niederhagen, R., Pa-
+pachristodoulou, L., Schneider, M., Schwabe, P., Wilcox-OHearn, Z.: Sphincs:
+practical stateless hash-based signatures. In: Eurocrypt. pp. 368397. Springer
+(2015)
+14. Bernstein, D.J., H ulsing, A., K olbl, S., Niederhagen, R., Rijneveld, J., Schwabe,
+P.: The sphincs+ signature framework. In: Proceedings of the 2019 ACM CCS. pp.
+21292146 (2019)
+15. Beullens, W., Beyne, T., Udovenko, A., Vitto, G.: Cryptanalysis of the legendre
+prf and generalizations. IACR Transactions on Symmetric Cryptology pp. 313330
+(2020)
+16. Beullens, W., de Saint Guilhem, C.D.: Legroast: Efficient post-quantum signatures
+from the legendre prf. In: PQCrypto. pp. 130150. Springer (2020)
+17. Bhadauria, R., Fang, Z., Hazay, C., Venkitasubramaniam, M., Xie, T., Zhang, Y.:
+Ligero++: a new optimized sublinear iop. In: Proceedings of the 2020 ACM CCS.
+pp. 20252038 (2020)
+18. Boneh, D., Gentry, C., Lynn, B., Shacham, H.: Aggregate and verifiably encrypted
+signatures from bilinear maps. In: Eurocrypt. pp. 416432. Springer (2003)
+19. Boneh, D., Kim, S.: One-time and interactive aggregate signatures from lattices.
+preprint 4(2020)
+20. Boschini, C., Takahashi, A., Tibouchi, M.: Musig-l: lattice-based multi-signature
+with single-round online phase. In: Annual International Cryptology Conference.
+pp. 276305. Springer (2022)
+21. Boudgoust, K., Takahashi, A.: Sequential half-aggregation of lattice-based signa-
+tures. Cryptology ePrint Archive (2023)
+22. Buchmann, J., Dahmen, E., H ulsing, A.: Xmss-a practical forward secure signa-
+ture scheme based on minimal security assumptions. In: PQCrypto. pp. 117129.
+Springer (2011)
+23. Buser, M., Liu, J.K., Steinfeld, R., Sakzad, A.: Post-quantum id-based ring signa-
+tures from symmetric-key primitives. In: ACNS. pp. 892912. Springer (2022)
+24. Byott, N.P., Chapman, R.J.: Power sums over finite subspaces of a field. Finite
+Fields and Their Applications 5(3), 254265 (1999)
+25. Chase, M., Derler, D., Goldfeder, S., Orlandi, C., Ramacher, S., Rechberger, C.,
+Slamanig, D., Zaverucha, G.: Post-quantum zero-knowledge and signatures from
+symmetric-key primitives. In: Proceedings of the 2017 ACM CCS. pp. 18251842
+(2017)
+26. Chiesa, A., Liu, S.: On the impossibility of probabilistic proofs in relativized worlds.
+Cryptology ePrint Archive (2019)
+27. Chiesa, A., Ojha, D., Spooner, N.: Fractal: Post-quantum and transparent recursive
+proofs from holography. In: Eurocrypt. pp. 769793. Springer (2020)
+28. van Dam, W., Hallgren, S.: Efficient quantum algorithms for shifted quadratic
+character problems. arXiv preprint quant-ph/0011067 (2000)
+29. Damg ard, I., Orlandi, C., Takahashi, A., Tibouchi, M.: Two-round n-out-of-n and
+multi-signatures and trapdoor commitment from lattices. Journal of Cryptology
+35(2), 14 (2022)
+39
+30. Dobraunig, C., Kales, D., Rechberger, C., Schofnegger, M., Zaverucha, G.: Shorter
+signatures based on tailor-made minimalist symmetric-key crypto. In: Proceedings
+of the 2022 ACM SIGSAC Conference on Computer and Communications Security.
+pp. 843857 (2022)
+31. Ducas, L., Kiltz, E., Lepoint, T., Lyubashevsky, V., Schwabe, P., Seiler, G., Stehl e,
+D.: Crystals-dilithium: A lattice-based digital signature scheme. IACR Transac-
+tions on Cryptographic Hardware and Embedded Systems pp. 238268 (2018)
+32. Fiat, A., Shamir, A.: How to prove yourself: Practical solutions to identification and
+signature problems. In: Conference on the theory and application of cryptographic
+techniques. pp. 186194. Springer (1986)
+33. Fleischhacker, N., Herold, G., Simkin, M., Zhang, Z.: Chipmunk: Better synchro-
+nized multi-signatures from lattices. In: Proceedings of the 2023 ACM SIGSAC
+Conference on Computer and Communications Security. pp. 386400 (2023)
+34. Fleischhacker, N., Simkin, M., Zhang, Z.: Squirrel: efficient synchronized multi-
+signatures from lattices. In: Proceedings of the 2022 ACM SIGSAC Conference on
+Computer and Communications Security. pp. 11091123 (2022)
+35. Frixons, P., Schrottenloher, A.: Quantum security of the legendre prf. Mathemat-
+ical Cryptology 1(2), 5269 (2021)
+36. Goldwasser, S., Kalai, Y.T., Rothblum, G.N.: Delegating computation: interactive
+proofs for muggles. JACM 62(4), 164 (2015)
+37. Goldwasser, S., Micali, S., Rackoff, C.: The knowledge complexity of interactive
+proof systems. SIAM JoC 18(1), 186208 (1989)
+38. Goldwasser, S., Micali, S., Rivest, R.L.: A digital signature scheme secure against
+adaptive chosen-message attacks. SIAM JoC 17(2), 281308 (1988)
+39. Grassi, L., Hao, Y., Rechberger, C., Schofnegger, M., Walch, R., Wang, Q.: Horst
+meets fluid-spn: Griffin for zero-knowledge applications. In: Annual International
+Cryptology Conference. pp. 573606. Springer (2023)
+40. Grassi, L., Khovratovich, D., L uftenegger, R., Rechberger, C., Schofnegger, M.,
+Walch, R.: Reinforced concrete: A fast hash function for verifiable computation.
+In: Proceedings of the 2022 ACM SIGSAC Conference on Computer and Commu-
+nications Security. pp. 13231335 (2022)
+41. Grassi, L., Khovratovich, D., Rechberger, C., Roy, A., Schofnegger, M.: Poseidon: A
+new hash function for {Zero-Knowledge }proof systems. In: 30th USENIX Security.
+pp. 519535 (2021)
+42. Grassi, L., Rechberger, C., Rotaru, D., Scholl, P., Smart, N.P.: Mpc-friendly sym-
+metric key primitives. In: Proceedings of the 2016 ACM CCS. pp. 430443 (2016)
+43. Hsiang, J.H., Fu, S., Kuo, P.C., Cheng, C.M.: Pqscale: A post-quantum signature
+aggregation algorithm (2023)
+44. H ulsing, A., Rausch, L., Buchmann, J.: Optimal parameters for xmss mt. In: Inter-
+national conference on availability, reliability, and security. pp. 194208. Springer
+(2013)
+45. Kales, D., Zaverucha, G.: Improving the performance of the picnic signature
+scheme. IACR Transactions on Cryptographic Hardware and Embedded Systems
+pp. 154188 (2020)
+46. Kaludjerovi c, N., Kleinjung, T., Kostic, D.: Improved key recovery on the legendre
+prf. Cryptology ePrint Archive (2020)
+47. Kate, A., Zaverucha, G.M., Goldberg, I.: Constant-size commitments to polyno-
+mials and their applications. In: Asiacrypt. pp. 177194. Springer (2010)
+48. Kattis, A., Panarin, K., Vlasov, A.: Redshift: transparent snarks from list polyno-
+mial commitment iops. Cryptology ePrint Archive (2019)
+40
+49. Katz, J., Kolesnikov, V., Wang, X.: Improved non-interactive zero knowledge with
+applications to post-quantum signatures. In: Proceedings of the 2018 ACM CCS.
+pp. 525537 (2018)
+50. Khaburzaniya, I., Chalkias, K., Lewi, K., Malvai, H.: Aggregating and thresholdiz-
+ing hash-based signatures using starks. In: AsiaCCS. ACM (2022)
+51. Khovratovich, D.: Key recovery attacks on the legendre prfs within the birthday
+bound. Cryptology ePrint Archive (2019)
+52. Lamport, L.: Constructing digital signatures from a one way function (1979)
+53. Lin, S.J., Chung, W.H., Han, Y.S.: Novel polynomial basis and its application to
+reed-solomon erasure codes. In: 2014 ieee 55th FOCS. pp. 316325. IEEE (2014)
+54. May, A., Zweydinger, F.: Legendre prf (multiple) key attacks and the power of
+preprocessing. In: 2022 IEEE 35th Computer Security Foundations Symposium
+(CSF). pp. 428438. IEEE (2022)
+55. Merkle, R.C.: A certified digital signature. In: Asiacrypt. pp. 218238. Springer
+(1989)
+56. Prest, T., Fouque, P.A., Hoffstein, J., Kirchner, P., Lyubashevsky, V., Pornin, T.,
+Ricosset, T., Seiler, G., Whyte, W., Zhang, Z.: Falcon. Post-Quantum Cryptogra-
+phy Project of NIST (2020)
+57. Reingold, O., Rothblum, G.N., Rothblum, R.D.: Constant-round interactive proofs
+for delegating computation. In: Proceedings of the 48th ACM ToC. pp. 255340
+(2016)
+58. Delpech de Saint Guilhem, C., Orsini, E., Tanguy, T.: Limbo: Efficient zero-
+knowledge mpcith-based arguments. In: ACM CCS. pp. 30223036 (2021)
+59. de Saint Guilhem, C.D., De Meyer, L., Orsini, E., Smart, N.P.: Bbq: using aes in
+picnic signatures. In: SAC. pp. 669692. Springer (2019)
+60. Seres, I.A., Horv ath, M., Burcsi, P.: The legendre pseudorandom function as a
+multivariate quadratic cryptosystem: security and applications. Applicable Algebra
+in Engineering, Communication and Computing pp. 131 (2023)
+61. Shor, P.W.: Polynomial-time algorithms for prime factorization and discrete loga-
+rithms on a quantum computer. SIAM review 41(2), 303332 (1999)
+62. Szepieniec, A., Ashur, T., Dhooghe, S.: Rescue-prime: a standard specification
+(sok). Cryptology ePrint Archive (2020)
+63. Van Dam, W., Hallgren, S., Ip, L.: Quantum algorithms for some hidden shift
+problems. SIAM Journal on Computing 36(3), 763778 (2006)
+64. Zaverucha, G., Chase, M., Derler, D., Goldfeder, S., Orlandi, C., Ramacher, S.,
+Rechberger, C., Slamanig, D., Katz, J., Wang, X., Kolesnikov, V., Kales, D.: Picnic.
+Technical report, National Institute of Standards and Technology (2020)
+65. Zhang, J., Xie, T., Zhang, Y., Song, D.: Transparent polynomial delegation and
+its applications to zero knowledge proof. In: 2020 IEEE S&P. pp. 859876. IEEE
+(2020)
+Appendix
+A Security of the Legendre PRF
+Let us first define the Shifted Legendre Symbol Problem (SLSP) as follows.
+Problem 1. (Shifted Legendre Symbol Problem [28]) Let pbe an odd prime and
+Kbe a uniformly random value in Fp. Given access to an oracle Othat on input
+aFp, computes O(a) =
+K+a
+p
+, find K.
+41
+It is known that if the adversary is allowed to query Oin a quantum mech-
+anism superposition, then a polynomial-time quantum algorithm can determine
+Kand break the pseudo-randomness of the PRF, using a single query [28, 63].
+If the oracle can only be queried classically, Khovratovich [51] showed a mem-
+oryless collision search algorithm with O(plogp) Legendre evaluations whenplogpqueries are available. Recent works concurrently improved the attack
+presented in [51], either by exploiting the multiplicative property of the Legendre
+function [15, 46] or by allowing input-independent pre-computations [54].
+In particular, if the number of oracle queries is bounded by L4p, [15]
+presented a table-based collision search algorithm that recovers the hidden shift
+with a time complexity of O(plog2p
+L2) Legendre symbol evaluations and a mem-
+ory cost of O(L2). [46] shows a similar table-based collision attack that further
+reduces the run time complexity to O(plog log p) on a (logp)-bit machine by
+using4p
+plog2plog log pqueries and O(plog log plogp) memory. By allowing
+pre-computation [54], the query complexity can be brought down (fromplogp)
+toO(3p), with O(3p
+p2) (offline) run time and O(3p) memory. There also exists
+a multiple-key attack against the Legendre PRF with O(mp) time/query com-
+plexity to recover mhidden shifts [54]. Another work [60] shows that recovering
+the hidden shift of the Legendre PRF is equivalent to solving a specific family of
+multivariate quadratic (MQ) equation systems, and algebraic cryptanalysis does
+not improve previous results.
+With classical queries to the PRF, if we allow the model of classical memory
+with quantum random access (QRACM), the query complexity, time complexity
+and memory complexity (in QRACM) of [46] can be improved to O(6p),O(3p),
+andO(3p), respectively. However, since there is no practical and scalable imple-
+mentation of QRACM at the moment, [35] improved the attack by eliminating
+the requirement of QRACM. They showed that there exists a quantum attack on
+the SLSP with 2O(
+log2p)3ptime complexity, while using3pclassical queries
+and a subexponential number of qubits memory.
+Problem 2. (Key Recovery of Loquat ) Let pbe an odd prime. Given Lrandom,
+uncontrolled PRF evaluations (i.e., public key) to the function LK() :Fp7
+{0,1}for some secret KFp, find K.
+It is easy to see that the key recovery of Loquat is at least as hard as the
+shifted Legendre symbol problem. Furthermore, the key recovery of Loquat im-
+poses additional constraints upon the adversary, making many attacks discussed
+previously more unpractical. Notably, the polynomial-time quantum attacks in-
+troduced in [28, 63] become infeasible in the context of Loquat key recovery. This
+is due to the adversarys inability to perform quantum superposition queries on
+the PRF.
+Moreover, if the number of oracle calls is bounded by L, the complexi-
+ties of key recovery attacks in [51, 15, 46] become O(plogp
+L),O(plog2p
+L2) and
+O(plogplog log p
+L2 ), respectively. These complexities are exponential in relation to
+the security parameter, especially when Lis sufficiently small. It is crucial to
+42
+emphasise that the enhancements proposed in [15, 46] are reliant on the sequen-
+tial characteristics of Legendre PRF queries. Consequently, it remains an open
+question whether these attacks can be extended to random point queries. In ad-
+dition, it is worth noting that the attacks described in [35, 54] are not applicable,
+as both of them rely on a substantial number of oracle queries.
+B Security Proofs
+B.1 Proof of Theorem 1
+We provide formal security analysis to our main theorem (Theorem 1) in this
+section. Note that the soundness analysis provided here is for IOP standard
+soundness. For state-restoration soundness, we refer the readers to
+Proof. Completeness. We begin by showing the completeness of the protocol. If
+the polynomials are computed honestly in the protocol, then ( x, w)RUSwhere
+x= (F, U, H, 4B+2,PB
+b=1bob) and w= c(x)q(x). It is not hard to observe
+that the degree of f(x) = c(x)q(x) is indeed less than 4 B+2since deg( c) =
+2B+2and deg( q) = 2 B1, where  c(x) = c(x) +ZH(x)r(x). Moreover,P
+aHc(a)q(a) =P
+aHc(a)q(a) since 0 =P
+aHZH(a)r(a). Recall that
+c|H= (Kr1, . . . , Kr B, r1, . . . , r B) and  q|H= (1, . . . ,  B, 1I1, . . . ,  BIB), for
+challenges Ib I. Then we can writeP
+aHc(a)q(a) as the sum of the entry-
+wise product between two vectors. That is,
+X
+aHc(a)q(a) =X
+aHc(a)q(a)
+= (Kr1, r1, . . . , Kr B, rB)(1, 1I1, . . . ,  B, BIB)
+=Kr11+r11I1++KrBB+rBBIB
+=BX
+b=1b(K+Ib)rb
+=BX
+b=1bob
+provided that ob= (K+Ib)rbfor all b[1, B], anddenotes the entry-wise prod-
+uct between vectors. Finally, L0(ob) =L0(K+Ib) +L0(rb) owing to the multi-
+plicative homomorphism of the Legendre PRF, it holds that L0(ob) =LK(Ib)+Tb
+provided that Tb=L0(rb) for all b[B]. The completeness holds.
+Knowledge Soundness We now show the (standard) proof-of-knowledge of the
+IOP protocol for -approximate Legendre PRF relation RL. Given an instance
+LK(I), ifP(LK(I)),V(LK(I))outputs 1 (i.e., Vaccepts) with non-negligible
+probability , then there exists an extractor Ewhich extracts a -approximate
+Legendre PRF witness Ksuch that ( K,LK(I))RLwith probability at
+43
+least US(1)B1/p, where USis the knowledge error of the zero-
+knowledge univariate sumcheck.
+If the verifier accepts, then there exists an extractor of the univariate sum-
+check protocol that extracts a valid witness polynomial  cwith probability at
+least USsuch that (( F, U, H, 4B+2,PB
+b=1bo
+b),(cq))RUS, where
+q(x) =Interpolate (H,q) for vector q= (1, 1I1, . . . ,  B, BIB) that is com-
+puted from Vs messages.
+Namely,PB
+b=1bo
+b=P
+aHc(a)q(a) and deg( cq)<4B+2.
+According to the protocol, we have following equations:
+BX
+b=1bo
+b=X
+aHc(a)q(a)
+= (c
+1, r
+1, . . . c
+B, r
+B)(1, 1I1, . . . ,  B, BIB)
+=1c
+1+1I1r
+1++Bc
+B+BIBr
+B
+=1(c
+1+I1r
+1) ++B(c
+B+IBr
+B)
+Since ( 1, . . . ,  B) are random scalars sampled uniformly from Fpafter the
+prover sends ( o
+1, . . . , o
+B) in the second round, thenPB
+b=1bo
+b=1(c
+1+I1r
+1)+
++1(c
+B+IBr
+B) implies that for all b[B],bo
+b=b(c
+b+Ibr
+b). In other
+words, for each b[B],o
+b=c
+b+Ibr
+bwith probability at least US1/p.
+Ecomputes for b[B],K
+b=c
+b
+r
+b. We assume that for all b[B], (K
+b,LK(I))/
+RLand show the probability that L0(o
+b) =LK(Ib) +T
+bholds for all b[B]
+is upper-bounded by (1 )B.
+Given K
+b=c
+b
+r
+b, we can re-write o
+baso
+b= (K
+b+Ib)r
+b. Since L0(o
+b) =
+LK(Ib) +T
+bfor all b[B], we have LK
+b(IB) +L0(r
+b) =LK(Ib) +T
+b. IfK
+b
+is not a -approximate witness, then we have the following inequality for all
+b[B],
+bL > L (3)
+where bL=dH  
+LK
+b(I) +L0(r
+b), . . . ,L0(r
+b
+,(T
+b,LK(IB))
+anddHdenotes
+the Hamming distance.
+In other words, L0(o
+b) =T
+b+LK(Ib) and ( K
+b,LK(I))/RLimplies that
+the challenge set Iis chosen from the fraction of (1 b)Lfor all b[B].
+Recall that Iis uniformly chosen after Psends the oracle codeword  c|U, then
+the probability that for all b[1, B],Ib Iis from the fraction (1 b)LisQB
+b=1(1b) which is strictly less than (1 )B. Thus, the probability that
+Efails to extract a -approximate witness from a valid transcript generated by
+P(LK(I)),V(LK(I))is at most US+ 1/p+ (1)B.
+Proof Length . The proof length is the total number of bits sent from the prover
+Pto the verifier V. In the first round, the prover sends an oracle codeword
+f1= c|Uand a plaintext message p1= (T1, . . . , T B) which has |U|  |F|+B
+bits (i.e., each Tbis one bit since it is the output of the Legendre PRF), where
+44
+|F|denotes the bit-length of the field elements. Then, in the second round, the
+prover sends a plaintext message p2= (o1, . . . , o B) where obFp. Thus, the
+total bit length for the second round is Blogp. From the third round, the prover
+and the verifier start to simulate the univariate sumcheck protocol, which has
+total bit length pUS. Hence, the total proof length is |U||F|+B+Blogp+pUS
+bits.
+Query Complexity . The query complexity denotes the total number of loca-
+tions queried by the verifier across all of the provers messages. In the first round,
+the prover sends an oracle codeword f1which will later be queried at 2lo-
+cations in order to perform the low-degree test. Hence, the query complexity is
+2+qUS.
+Prover Complexity and Verifier Complexity . The prover in Algorithm
+1 needs to interpolate and evaluate polynomials  cand q, which has costs of
+2FFT (IFFT (|H|),|U|). It computes BLegendre PRFs (i.e., Tb=L0(rb) for
+b[B]), which has BO(logp) arithmetic complexity. The verifier additionally
+computes BLegendre PRF (i.e., checks if L0(ob) =L0(Ib) +Tbfor all b[B]),
+which costs BO(logp). Note that we omits the operations required to compute
+ZH(x) since for a fixed multiplicative coset H, it can be computed in an offline
+phase.
+Zero-Knowledge . We present a construction of the simulator Swhich is given
+the straight-line access (i.e., no rewinding) to a malicious verifier V, it perfectly
+simulates Vs view in the real protocol.
+The simulator Spicks 2 Bfield elements c= (c1, . . . , c 2B) uniformly at ran-
+dom and computes  c=Interpolate (H,c). It outputs f
+1= c|U. Given the
+second round random challenge Ifrom V, it computes o
+b=cb+cb+1Iband
+T
+b=L0(o
+b)LK(Ib). Outputs the first round message f
+1andp
+1= (T1, . . . , T B)
+and follows the description of the protocol.
+With 2queries, the verifier cannot distinguish between f
+1(a random
+polynomial) and f1(masked by a random polynomial  r(x) with degree 2).
+T
+b=L0(o
+b)LK(Ib) forb[B] are indistinguishable from Tb=L0(rb) since rb
+are chosen uniformly at random from Fp. For the second round, o
+b=cb+cb+1Ib
+andob=Krb+Ibrbare indistinguishable owing to rb$Fp. The rest of the
+proof follows from the zero-knowledge univariate sumcheck.  
+B.2 Proof of Lemma 2
+We show the restricted state-restoration soundness of our key identification pro-
+tocol as shown in Algorithm 1 (with zero-knowledge enabled from Remark 3).
+Proof. In the restricted state-restoration attack, the malicious prover Pcommits
+to the messages in initial round (i.e., f1= c|Uandp1= (T
+1, . . . , T
+B)) and
+starts its interaction with V. Then, in all later rounds, Pcan rewind the verifier
+to any round (except for the initial round), and the verifier continue with fresh
+45
+randomness. For any b-bound Pto convince the verifier (without the knowledge
+ofK), it must pass the following checks:
+1.VUS(F, U, H, 4B+2,PB
+b=1bo
+b) accepts, and
+2.L0(o
+b) =LK(Ib) +T
+bfor all b[B] and non-zero o
+b.
+Cheat on the second round. Suppose Prewinds Vto the second round b1
+times, where b1bkUS. It finds the best set Isuch that there exists a subset
+I Iwith maximum size. For all IbI,o
+b=c
+b+r
+bIbandL0(o
+b) =pkIb+T
+b.
+We denote X= max( X1, . . . , X b1) where Xiare i.i.d. as B(B,(1)).
+Cheat on the third round. Suppose Prewinds Vto the third round b2times,
+where b2bb1(kUS1). It finds the best set of ( 1, . . . ,  B) such that
+for the remaining B |I|,I
+b I/I(i.e., those has L0(o
+b) =pkI
+b+T
+bbut
+o
+b=c
+b+r
+bI
+b),P
+I
+bI/Ibo
+b=P
+I
+bI/Ib(c
+b+r
+bI
+b). We denote Y=
+max( Y1, . . . , Y b2) where Yiare i.i.d. as B(BX,1/p).
+Cheat on the univariate sumcheck. For the remaining indices, Phas to
+cheat on the univariate sumcheck within b3bb1b2rewinds. We denote by
+Z= max( Z1, . . . , Z b3) where Ziare i.i.d. as B(BXY,  US).  
+B.3 Proof of Theorem 3
+Proof. LetAbe an adversary against EUF-CMA security of Loquat , we con-
+struct an adversary Bagainst EUF-KO. When Bis run on input pk, it starts A
+on input pk. We first define the construction of the signing oracle and random
+oracle, then argue that the simulated signature is indistinguishable from real
+ones, and finally show that EUF-KO implies EUF-CMA security.
+ Simulating random oracles. Bmaintains a list of input-output pairs for
+random oracle queries and a list of bad outputs denoted as BadHwhich
+stores all random oracle outputs. If the query was made before by A, then B
+responses with the same answer. Otherwise, Breturns a uniformly random
+output and record the new input-output pair in the list.
+ Simulating signing oracle. When Aqueries the signing oracle with mes-
+sage M,Bsimulates the signature and program the output of the Hof
+the second round to generate the desired challenge indices. Bsimulates the
+signing oracle as follows:
+1. On input a message M,Brandomly samples a fake key K$F
+pand for
+j[n], (r1,j, . . . , r m,j)$F
+p. Then it follows the protocol to compute
+the vector cj= (Kr1,j, r1,j, . . . , Krm,j, rm,j).Bfollows the protocol to
+obtain the Merkle root root c.
+2.Bgenerates a random output h1 {0,1}2, ifh1BadH,Baborts.
+Otherwise, Bcomputes ( I1,j, . . . , I m,j)j[n]Expand (h1) and Ti,j=
+L0((K+Ii,j)ri,j)pkIi,j, fori[m], j[n].
+3.Bprograms the output of Hto be h1on input ( root c,(T1,j, . . . , T m,j)j[n], M).
+4.Bcomputes oi,j= (K+Ii,j)ri,jfor all b[B].
+5.Bfollows the rest of the protocol.
+46
+6. Finally, Boutputs (( Ti,j, oi,j)i[m],j[n]US, LDT).
+When Aoutputs a forgery for the EUF-CMA game, Bforwards the forgery as
+its forgery for the EUF-KO game.
+We show that the simulation is not distinguishable from the real signature.
+IfBdid not abort, then the simulation of the random oracle is perfect. Acan
+only distinguish the simulated signature if Bfailed to program the output of H
+on input ( root c,(T1,j, . . . , T m,j)j[n], M).
+In other words, ( root c,(T1,j, . . . , T m,j)j[n], M) was queried before. Other-
+wise, the simulated signature follows exactly the same distribution as the real
+signature.
+We now establish Bs advantage against EUF-KO. There are two situations
+thatBmay abort during the simulation of the signing oracle, which are shown
+as follows.
+1. In step 2, if h1was used in one of the previous simulated signatures, which
+happens with probability q2
+s22.
+2.Bfailed to program the output of the Hto generate desired challenges, that
+is, (root c,(T1,j, . . . , T m,j)j[n], M) was queried before, which happens with
+probability ( qsqH1)22.
+Therefore, if AdvEUF-CMA
+A wins the game with probability ,Bwins the EUF-KO
+with the probability (qs(qs+qH1))22.  
+B.4 Proof of Theorem 4
+Proof. LetAbe an adversary against the aggregate chosen-key security of Angus,
+we construct an adversary Bagainst the unforgeability of Loquat in the URS
+model. When Bruns on input pk1that is generated using the KeyGen algorithm,
+it starts Aon input pk1. Denote the extractor of the SNARK protocol as ESNARK
+with extracting probability eSNARK. After Aterminates, ESNARK extracts a valid
+witness w= (
+1, 
+2, . . . , 
+N).
+We now argue that if w= (
+1, 
+2, . . . , 
+N) is a valid witness against x=
+((M1, pk1), . . . , (MN, pkN)), then every signature 
+efore[N] is a valid Lo-
+quat signature. We can rewrite 
+e= (e,(s(e)
+i,j)i[m],j[n]). Then, we prove that
+for all e[N], 1L-Verify (e, Me, pke,L-pp). We first split the tasks of
+Loquat verification to three parts:
+1. verifying hash chain and Merkle tree;
+2. verifying non-interactive univariate sumcheck proof;
+3. verifying quadratic residuosity of obagainst pkIi,j+Tbfor all b[1, B].
+Since the hash chain, Merkle tree, and non-interactive univariate sumcheck
+are directly proven in the circuit, then they are valid for each signature with
+the same probability eSNARK. Now we argue that if there exists a set of valid
+(s(e)
+i,j)i[m],j[n]such that
+s(e)
+i,j2
+=o(e)
+i,j
+
+pk(e)
+Ii,j+T(e)
+i,j
++
+1
+pk(e)
+Ii,j+T(e)
+i,j
+,
+47
+then the verification of quadratic residuosity of o(e)
+i,jagainst pk(e)
+Ii,j+T(e)
+i,jfor all
+i[n], j[M] and e[N] must also pass.
+Indeed, since the circuit proves that the computation of t(e)
+i,jis correct for ev-
+eryb[1, B] and i[1, n], where t(e)
+i,j=o(e)
+i,j
+
+pk(e)
+Ii,j+T(e)
+i,j
++
+1
+pk(e)
+Ii,j+T(e)
+i,j
+,
+and it proves that t(e)
+i,jis a quadratic residue by finding some s(e)
+i,j(outside of the
+circuit) such that
+s(e)
+i,j2
+=t(e)
+i,j, it implies that L0(o(e)
+i,j) =pk(e)
+Ii,j+T(e)
+i,jfor
+non-zero o(e)
+i,j. Specifically, we can argue the following two cases:
+1.L0(o(e)
+i,j) = 0 and pk(e)
+Ii,j+T(e)
+i,j= 1. We prove that in this case, s(e)
+i,jdoesnt
+exist. Since t(e)
+i,jis computed in the form of o(e)
+i,j(1 + (1 1)) = o(e)
+i,j,
+where is a public quadratic non-residue. If o(e)
+i,j= 0, then o(e)
+i,jis a quadratic
+residue, and o(e)
+i,jis a quadratic non-residue, and there does not exist a
+valid s(e)
+isuch that
+s(e)
+i,j2
+=o(e)
+i,j. Thus the SNARK proof fails that
+contradicts with the assumption where is a valid aggregate signature.
+2.L0(o(e)
+i,j) = 1 and pk(e)
+Ii,j+T(e)
+i,j= 0. In this case, s(e)
+i,jdoesnt exist as well.
+Since t(e)
+i,j=o(e)
+i,j(0 + (1 0)) = o(e)
+i,jandL0(o(e)
+i,j) = 1 implies that o(e)
+i,j
+is a quadratic non-residue, then there does not exist a valid s(e)
+i,jsuch that
+s(e)
+i,j2
+=o(e)
+i,j. Thus the SNARK proof fails in this case, which contradicts
+with the assumption where is a valid aggregate signature.
+Therefore, for any non-zero o(e)
+i,j,is a valid aggregate signature implies that
+L0(o(e)
+i,j) =pk(e)
+Ii,j+T(e)
+i,jfor all b[1, B] and i[1, n]. To sum up, the signature
+ifor all i[1, n] is valid. Thus, Bis able to forge the signature against Loquat
+in the URS model using A.  
+B.5 Proof of Theorem 5
+Proof. The security proof is similar to the the proof of Theorem 4, where given
+a challenge public key pk1, ifAoutputs a valid SNARK proof kafter ktimes
+of the proof recursion, by making at most qsqueries to the signing oracle, then
+the algorithm Bcan break the unforgeability of Loquat in the URS model
+running ESNARK. Namely, after Aterminates, ESNARK is able to extract a valid
+witness w= (
+1, . . . , 
+N) recursively.
+As we have proved in Section B.4, where if the adversary Awho outputs
+a valid (ordinary) SNARK proof, the extractor can extract the corresponding
+witness. We now show the process of recursive extraction.
+Ifis a valid SNARK proof, then 1 SNARK -V((C,R), , x), where
+x= ((M, PK ), x1).ESNARK runs in time tSNARK to extracts wwhich is a valid
+SNARK witness w= (, 1) with probability at least = 1eSNARK. Hence,
+all signatures in are valid (i.e., the last chunk of signatures) and the previous
+48
+proof 1is valid against x1. Since 1is a valid SNARK proof, then
+the extractor extracts a witness w1= (1, 2) with probability at least
+1= 1eSNARK. In other words, signatures in 1are all valid and 2
+is a valid SNARK proof against x2. The recursive process repeats times,
+with the final probability 1= 1eSNARK, the extractor extracts a list of valid
+signatures w1=1, which contains a valid signature against ( M, PK )1.  
+C Analysis of Signatures SNARK-Friendliness
+C.1 Loquat
+We first analyse the number of arithmetic operations (mainly multiplications)
+and hash evaluations involved in Loquat verification algorithm.
+Hash Evaluations There are three parts in Loquat verification that requires
+hash evaluations, including
+Recompute hash chain.
+Expand the challenges.
+Verifying Merkle Commitments.
+Recompute Hash Chain. We denote the security parameter to be .
+1. Recompute h1 H 1(root c,(Ti,j)i[m],j[n], M) :H1:{0,1}4 {0,1}2.
+2. Recompute h2 H 2((oi,j)i[m],j[n], h1):H2:{0,1}(B+2) {0,1}2.
+3. Recompute h3 H 3(root s, S, h 2):H3:{0,1}6 {0,1}2.
+4. For i= [4,5 +r], recompute hi H i(root, hi1):Hi:{0,1}4 {0,1}2.
+Overall, the verifier computes 3 + rhash evaluations with input length 4 , 1
+evaluation with input length ( B+ 2), and 1 evaluation with input length 6 .
+Expand the Challenges. For expanding h1, instead of getting ( Ii,j)i[m],j[n]
+I, we let the prover and the verifier expand h1to get indices ( Ii,j)i[m],j[n][L].
+This change effectively reduces the required output length for expanding h1.
+Similarly, expanding h5+rto obtain indices in [ |U|]. Since 2code elements are
+hashed together, the number of leaf nodes in each tree decreases to |U|/2.
+1. (Ii,j)i[m],j[n]Expand (h1): output length {0,1}Blog2L.
+2. ((i,j)i[m], j)j[n]: output length {0,1}B+2n.
+3.eExpand (h4): output length {0,1}16.
+4. (S1, . . . , S )Expand (h5+r): output length {0,1}(log|U|2).
+5. For i= 3 and i[5,4 +r], output length {0,1}2. If using algebraic hash
+functions and set output length to be 2 , then we can omit the expansions
+in these steps.
+49
+Verifying Merkle Commitments. We first introduce several optimisations in
+order to reduce the total number of constraints. We choose t=log2()1as
+in Fractal [27].
+In the following analysis, we mainly consider the verification of main code-
+word (i.e., the polynomials that are evaluated over the code domain U). This is
+because the hash calls of other rounds in LDT can be small with the optimisa-
+tion.
+1. Verify 4 Merkle tree authentication paths for root c,root s,root h,rootf(0),
+with the number of leaf nodes |U|/2and tree cap t: 4(log2(|U|)t)
+invocation to HMT:{0,1}4 {0,1}2.
+2. Recompute leaf nodes for each tree: 4 invocations to Hleaf:{0,1}2+1
+{0,1}2.
+3. Recompute tree cap: 4 calls to Hcap:{0,1}2t1 {0,1}2.
+Hash-based Computations Number of Hashes
+Recompute Hash Chain 5 + r
+Expand Challenges 4
+Verify Merkle Commitments 4 (log2(|U|)t+ 1) + 4
+Total 4 (log2(|U|)t+ 1) + r+ 13
+Table 7. Number of Hash Evaluations in Loquat Verification
+Algebraic Operations The algebraic operations of Loquat verifier mainly
+involves
+1. Interpolate the challenge polynomial ( qj(x))j[n]and evaluate the polyno-
+mial on 2points.
+2. Recompute code elements for rational constraints and interleaved code.
+3. Verify polynomials to check round consistency in the low-degree test.
+4. Check if L0(ob) =pkIi,j+Tbfor all b[B].
+For interpolating the polynomial  qj(x)j[n], the verifier is given vectors qj=
+(1,j, 1,jI1,j, . . . ,  m,j, m,jIm,j) and a multiplicative coset HFwith|H|=
+2m. According to [53], polynomial evaluation over a smooth multiplicative sub-
+group of size ncan be performed in O(nlogn) field operations via FFT and IFFT
+respectively. Hence, interpolating ( qj(x))j[n]requires 2 mn(1 + log m) opera-
+tions. Then, the verifier evaluates ( qj(x))j[n]on2, with 2n(1 + log m)
+operations. Hence, the total number of interpolating and evaluating polynomial
+n(2m+2)(1 + log m) operations.
+The verifier next re-computes code elements for rational constraint  p(x)
+which is defined as  p(s) =|H|(zf(s)+s(s))|H|ZH(s)h(s)(z+S)
+|H|s, forsQ, where Q
+50
+denotes the LDT queries ( |Q|=2). To recompute f(s) =Pn
+j=1jfj(s), the
+number of multiplications is n2, while the number of addition is ( n1)2.
+To recompute fj(s) = cj(s)qj(s) requires n2multiplicaitons. To recompute
+=Pm
+i=1(Pn
+j=1i,joi,j), which requires Bmultiplications and B1 additions.
+To recompute Z+Srequires 1 multiplication and 1 addition. Thus, the re-
+computation of  p(s) requires 5 2multiplications and 3 2additions.
+The verifier also needs to recompute the interleaved code according to the
+following equation:
+f(0)(x) =e1nX
+j=1(c
+j(x)) +e2s(x) +e3h(x) +e4p(x)
++e5x(1)|U|c(x) +e6x(2)|U|s(x)
++e7x(3)|U|h(x) +e8x(4)|U|p(x)
+Since x(i)|U|where i {1, . . . , 4}can be computed outside of the circuit,
+the total number of multiplications to recompute codeword for f(0)is 82,
+while the total number of additions is ( n+ 6)2.
+To check round consistency in the low-degree test, we can use the constraint
+system designed in Fractal [27, Section 12.2.2]. That is, given an identifier of a
+coset SU, checking round consistency costs 2 |S|+O(log(|S|)), where |S|= 2
+Since we choose the localisation parameter = 2,|S|= 2= 4. Since we have r
+rounds, with each round, the verifier interpolate and evaluation polynomials
+with degree 21, the total cost is r(2+1+).
+Finally, we analyse the number of constraints to check L0(oi,j) =pkIi,j+Ti,j
+for all i[m], j[n]. In order to avoid heavy computation of Legendre PRF in
+the circuit, we let the verifier computes ti,j=oi,j((pkIi,j+Ti,j)+1(pkIi,j+
+Ti,j)) and then checks if s2
+i,j=ti,j(i.e., check if ti,jis a quadratic residue). This
+step costs 3 Bmultiplications and 4 Badditions. We summarise the analysis in
+Table 8.
+Algebraic Computations Number of Operations
+Interpolate and Evaluate  q(x) n(2m+2)(1 + log m).
+Recompute Missing Code Elements (2 n+ 13) 2+B+ 1
+Verify Round Consistency of LDT r(2+1+)
+Check Quadratic Residues 3 B
+Total2(3n+nlogm+ 13 + 2 r) +
+2mn(1 + log m) +nr+ 4B+ 1
+Table 8. Number of Algebraic Operations in Loquat Verification
+51
+C.2 Other Signature Schemes
+We analyse the algebraic operations and hash operations involved in Picnic
+[25, 45], LegRoast [16], Banquet [6], Rainer[30], and SHPINCS+[14] using the
+following method.
+Picnic1 (without preprocessing) [25] Choose the MPC-in-the-head param-
+etern= 3 and the repetition parameter M= 438 with security level 128, the
+number of multiplications is 2,680,560, while the number of hash operations is
+7,008 in the signature verification algorithm.
+Picnic3 (with preprocessing) [45] Choose the MPC-in-the-head parameter
+n= 16, the repetition parameter M= 604, and the preprocessing parameter
+= 68, with security level 128. The number of multiplications is 3,121,200 while
+the number of total hash operations is 1,679,784 in the signature verification
+algorithm.
+LegRoast [16] Choose the MPC-in-the-head parameter n= 16, the repetition
+parameter M= 54, and the Legendre PRF parameter B= 9, = 0.449 with
+NIST security level I. The choice of these parameters result in best verification
+time. The number of multiplications is 26,631 and the number of hash operations
+is 10,152 in the signature verification algorithm.
+Banquet [6] Choose the MPC-in-the-head parameter n= 16 and the number
+of parallel executions = 41 for 128-bit security (result in best verification time),
+the verification algorithm has 4,147 hash evaluations and 11,348,390 algebraic
+computations.
+Rainer [30] Choose the MPC-in-the-Head parameter N= 16 and repetition
+parameter = 33 for Rainer3 with 128-bit security (result in best verification
+time), the verification algorithm has 3,337 hash evaluations and 25,763,233 al-
+gebraic computations.
+SPHINCS+. In SPHINCS+ [14, Table 1], the authors provided an overview of
+the number of hash calls required for key generation, signing, and verification. We
+use the parameters of SPHINCS+(128s), where n= 16, h= 63, d= 7,log(t) =
+12, k= 14, w= 16, and len= 35 with security level 133, to obtain the total
+number of hash invocations in key generation (305,663), sign (2,397,129), and
+verification (4,172). We also consider SPHINCS+(128f), with parameters n=
+16, h= 66, d= 22,log(t) = 6 , k= 33, w= 16, and len= 35 for security level
+128. The resulting total number of hash invocations in key generation is 4,775,
+signing is 111,353, and verification is 12,639.
+52

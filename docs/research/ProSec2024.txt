@@ -1,0 +1,921 @@
+BDEC: Enhancing Learning Credibility via
+Post-Quantum Digital Credentials
+Zoey Ziyi Li1[0000 0002 6419 0734], Xinyu Zhang1,2[0009 0008 7764 4265],H u i
+Cui1[0000 0002 5820 2233], Jun Zhao1[0009 0003 8423 177X],a n dX u a n
+Chen1[0009 0002 1538 8792]
+1Monash University, Melbourne, Australia
+Ziyi.Li,Xinyu.Zhang1,Hui.Cui,Jun.Zhao1,Xuan.Chen1@monash.edu
+2Data61, CSIRO, Sydney, Australia
+Abstract. Digital credentials can streamline the verication process,
+reduce fraud, and enhance the portability and accessibility of academic
+records, and thus digital credentials become increasingly essential for
+verifying academic achievements and qualications in a rapidly digitiz-
+ing world. However, current research on digital credentials in the edu-
+cation scenario falls into two categories: 1) blockchain-veriable creden-
+tials, which either rely on blockchain security or classical cryptographic
+problems and are not quantum-safe; and 2) post-quantum anonymous
+credentials, primarily lattice-based, facing challenges in achieving condi-
+tional linkability and e!cient revocation.
+In this paper, we propose a generic framework for constructing an anony-
+mous credential system named Blockchain-based Digital Education Cre-
+dential ( BDEC ). Our framework requires only a digital signature scheme
+and a zkSNARK. We formally prove the unforgeability, anonymity, and
+unlinkability of the proposed framework and show that it additionally
+supports conditional linkability and revocability. By instantiating the
+framework with the post-quantum signature Loquat [Crypto24] and
+zkSNARK Aurora [Eurocrypt19], we construct a post-quantum anony-
+mous credential system whose security relies on collision-resistant hash
+functions and the Legendre PRF. Furthermore, our resulting system of-
+fers signicant improvements in its concrete performance over the lattice-
+based system [Crypto23].
+Keywords: Digital Credential Anonymous Post-Quantum Blockchain
+1I n t r o d u c t i o n
+Traditionally, education certicates have served as the primary means to prove
+an individuals educational achievements, skills, and employability in the job
+market [ 23]. However, recent incidents have seriously challenged the credibility
+of educational certicates. For example, a private university in India sold 36,000
+First and second authors contributed equally to this work, and their sequence is
+according to alphabetical order.
+2Z . L i a n d X . Z h a n g e t a l .
+fake degrees for $1,362 each, causing graduates in Singapore, Malaysia, the US,
+and Canada to face pressure from employers worldwide to verify their qualica-
+tions [ 22]. Additionally, 150 Indian students in Canada faced deportation after
+being victims of an immigration scam that provided them with forged college
+admission letters [ 15]. On the other hand, honest students holding authentic cer-
+ticates are at risk of credential misuse and theft, as demonstrated by LinkedIns
+2021 breach, which resulted in 700 million users proles being sold on the Dark
+Web [ 27]. In addition, the rise of micro-credentials, dened by the European
+Commission [ 9], as proofs of learning outcomes acquired through short learning
+experiences, often results in fragmented learning records. This fragmentation not
+only makes it di!cult to track continuous progress but also leads to repetitive
+proofs of the same skills [ 10]. These issues underscore the urgent need for a more
+credible digital credential scheme with the following desired properties, which is
+the focus of our study:
+Unforgeability: Ensures that credentials cannot be counterfeited.
+Anonymity: Protects user privacy by preventing the linkage of credentials to
+their identity.
+Unlinkability: Guarantees user privacy one step further as di"erent shown
+credentials cannot be linked to same identity.
+Conditional Linkability: Supports selective linkability to address fragmented
+learning records.
+Revocation: Enables the ability to revoke credentials if they are compromised
+or invalidated, ensuring that only legitimate credentials remain active.
+1.1 Related Work
+To address the above-mentioned issues, the most state-of-art approaches fall
+into two categories: blockchain-veriable credentials and post-quantum anony-
+mous credentials. These recent works build upon the foundational concept of
+pseudonymous credentials, rst proposed by Chaum in 1984 [ 4], which enables
+users to sign documents without revealing their identity. The Camenisch and
+Lysyanskaya (CL) signature scheme [ 3]f u r t h e ra d v a n c e dt h i s e l db yp r o v i d i n g
+af r a m e w o r kf o rc r e a t i n gs e c u r ea n de ! c i e n ta n o n y m o u sc r e d e n t i a l su s i n gg r o u p
+signatures and zero-knowledge proofs. Until 2014, Garman et al. introduced de-
+centralized anonymous credentials (DAC), leveraging the benets of distributed
+technology to enhance privacy and security [ 11].
+Blockchain-veriable credentials: In the recent blockchain domain, signif-
+icant e"orts have been made to combat credential forgery and theft. Notably,
+Damgard et al. introduced a credential identity layer that balances accountability
+and privacy in blockchain systems to mitigate Anti Money Laundering issues
+[7]. Other proposals have utilized Veriable Credentials (VC) and blockchain
+Non-Fungible Tokens (NFTs) for various applications, such as electric vehicle
+authentication [ 20]a n de d u c a t i o nc r e d e n t i a l s[ 16]. Traceability has also gained
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 3
+considerable research attention in blockchain proposals. Zhuang et al. proposed
+ap r i v a c y - p r e s e r v i n ga n dt r a c e a b i l i t ys c h e m ef o ri n t e l l e c t u a lp r o p e r t y[ 29], and
+similar e"orts have been made for numerous supply chain management systems
+[17,18]. Regarding conditional linkability, Coconut introduced the rst selective
+disclosure attribute-based credential scheme supporting threshold issuance, al-
+though it lacked support for traceability or revocation [ 26]. Shi et al. addressed
+this limitation by incorporating threshold tracing and revocation properties [ 24].
+In terms of updatability, Garman et al.[ 11]d i s c u s s e dt h ec r e a t i o no fu p d a t a b l e
+(e.g., stateful) anonymous credentials, although their work did not fully im-
+plement this feature. Despite these advancements, current approaches largely
+rely on blockchain security or classical cryptographic problems (strong RSA or
+Di!eHellman assumption) and are not quantum-safe. None of them can satisfy
+all the desired security properties comprehensively.
+Quantum-resistant Credential: Jeudy et al. [ 12]p r o p o s e dt h e r s tl a t t i c e -
+based anonymous credentials system, leveraging the hardness of the Short Inte-
+ger Solution (SIS) and Learning With Errors (LWE) problems. Their approach
+marks a signicant step towards quantum-resistant credentials, but it currently
+supports only a single message, making its use for anonymous veriable creden-
+tials (VCs) cumbersome in terms of data size and performance. Other notable
+quantum-based proposals include the work of Blazy et al. [ 2], who provided a
+generic framework for constructing anonymous credential schemes, and Kazmi et
+al. [13], who introduced a pseudonymous credential scheme specically designed
+for use in payment systems. The only education-focused study is by Shrivas et al.
+[25], who proposed a quantum-resistant university credentials verication system
+using lattice-based cryptography and hash-based signatures within a consortium
+blockchain. However, this study lacks comprehensive security proofs and code
+implementation. Overall, the current quantum-resistant credential proposals are
+primarily lattice-based, facing challenges in achieving conditional linkability and
+e!cient revocation, thus highlighting the need for further research, possibly ex-
+ploring symmetric-key primitives based schemes [ 8].
+1.2 Our Contributions
+Our contributions are twofold:
+Contribution I .W ep r o p o s eag e n e r i cf r a m e w o r kf o rc o n s t r u c t i n ga n o n y -
+mous credential systems that also achieve conditional linkability and revo-
+cability. Our framework assumes only black-box access to a digital signature
+scheme and a zero-knowledge succinct non-interactive argument of knowl-
+edge (zkSNARK) protocol, allowing for e!cient instantiation with post-
+quantum building blocks. We provide a formal security analysis of the pro-
+posed framework, proving its unforgeability, anonymity, and unlinkability.
+Notably, if the underlying signature and zkSNARK schemes achieve perfect
+zero-knowledge, which is commonly the case, our system achieves perfect
+anonymity and unlinkability.
+4Z . L i a n d X . Z h a n g e t a l .
+Contribution II .W ep r o v i d eap o s t - q u a n t u mi n s t a n t i a t i o no fo u rf r a m e -
+work using Loquat [28], a post-quantum signature scheme based solely
+on collision-resistant hash functions and the Legendre PRF. We instanti-
+ate the underlying zkSNARK with Aurora [ 1]a n dF r a c t a l[ 5], respectively.
+To demonstrate the practicality of our system, we analyze and compare the
+sizes of key pairs, credentials, and credential proofs with those of existing
+post-quantum anonymous credential systems. Assuming 128-bit security, our
+instantiation with Loquat and Aurora results in public key, private key, cre-
+dential size, and credential proof size reductions of 2,447, 86,752, 5.56, and
+4.82 times, respectively, compared to the lattice-based anonymous credential
+scheme proposed by Jeudy et al. [ 12].
+Studies Garman
+et al. [ 11]Damgard
+et al. [ 7]Coconut
+[26]Jeudy et
+al. [12]Shrivas
+et al. [ 25]This
+study
+Unforgeability      
+Anonymity      
+Unlinkability      
+Conditional Linkability      
+Quantum-resistance      
+Table 1. Properties Comparison with Existing Anonymous Credential Systems
+1.3 Organizations
+The rest of the paper is organized as follows. Section 2provides a brief review of
+denitions used in this paper. Section 3presents the framework of a blockchain-
+based digital education credential system (BDEC). In Section 4,w ed e t a i lB D E C
+based on decentralized anonymous credential schemes, and analyze its security.
+We evaluate the performance of our proposed BDEC system in Section 5and
+conclude the paper in Section 6.
+2P r e l i m i n a r i e s
+In this section, we briey describe relevant denitions to be used in this paper.
+2.1 zkSNARKs
+LetRbe an e!ciently decidable binary relation for an NP language LR.
+Denition 1 (zkSNARK). A zero-knowledge succinct non-interactive argu-
+ment of knowledge (zkSNARK) consists of a tuple of probabilistic polynomial
+algorithms, denoted as (S,P,V)such that
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 5
+crsS(1,R). On input a security parameter in unary, the algorithm
+outputs a common reference string crs.
+P(crs,w,x ). On input a common reference string crsand a witness-
+statement pair (w,x), the algorithm outputs a succinct argument .
+0/1V(crs,x , ). On input a common reference string crs, a claimed
+statement xand the argument , the algorithm outputs 1(accept) if is
+convincing (i.e., the prover knows a witness wsuch that (w,x)Rfor some
+NP relation R).
+2.2 Digital Signature
+Denition 2 (Digital Signature). A signature scheme consists of the follow-
+ing algorithms (Sig.Setup ,Sig.KeyGen ,Sig.Sign ,Sig.Verify ):
+1.Sig.ppSig.Setup (1). On input a security parameter in unary, the
+algorithm generates a set of public parameters denoted as Sig.pp.
+2.(sk, pk )Sig.KeyGen (Sig.pp): On input public parameters Sig.ppgener-
+ated in the setup phase, the algorithm outputs a key pair (sk, pk ).
+3.Sig.Sign (Sig.pp,s k,m ): On input public parameters Sig.pp,as e c r e t
+keysk, and a message m, the (randomized) algorithm outputs a signature .
+4.(0/1)Sig.Verify (Sig.pp, pk, m,  ): On input public parameters pp,a
+public key pk, a message m, and a signature , the algorithm outputs 1
+(accept) if the signature is valid. Otherwise, outputs 0 (reject).
+Due to page limits, we refer readers to the standard security notions of zk-
+SNARKs and digital signatures as detailed in [ 19]a n d[ 28], respectively.
+2.3 Blockchain
+Since its adoption in the Bitcoin cryptocurrency [ 21], the blockchain platform,
+which is essentially a chain of blocks storing relevant digital data, has been
+proposed to a wide range of applications. As a distributed ledger, the blockchain
+enables the data to be stored on a number of nodes (or computers). Due to
+the fact that the data can be accessed by anybody, it is challenging for any
+single entity to fully control of the whole blockchain network. Such a distributed
+feature of the blockchain, integrating with smart contracts [ 6], allows users to
+deploy applications on the blockchain without the involvement of any trusted
+authority.
+3S y s t e m F r a m e w o r k
+In this section, we describe the framework of a blockchain-based digital education
+credential system, as well as its security requirements.
+6Z . L i a n d X . Z h a n g e t a l .
+3.1 System Architecture
+LetNZ+be the maximum attributes {a1,...,aN}(here {ai}i[1,N]could be
+Student Name: ABC, University: XYZ University, Major: Law, Year: 2023, etc.)
+that each student Uin the blockchain-based digital education credential BDEC
+scheme can claim. At the beginning, each student Urandomly selects a secret skU
+as the private user-key, and then derives a series of pseudonym public and private
+keys (ppk U,T A,psk U,T A)to communicate with di"erent educational authority
+TA(e.g., colleges, universities, tertiary training organizations). The public key
+ppk U,T Aplays the role of the pseudonym identity between the student Uand the
+authority TA.W h e nt h es t u d e n t Uneeds to obtain an education credential on
+certain eligible attributes A={a1,...,am}(where mZ+N), the student U
+creates a credential cU,T Aon attributes Ato the relevant educational institute
+TAfrom its keys (ppk U,T A,psk U,T A)established with the authority TA,a sw e l l
+as a corresponding proof cU,TAon the credential cU,T A.O n c et h ea u t h o r i t y TA
+veries the authenticity of the credential cU,T Aover attributes Aand the proof
+cU,TAprovided by the student U,t h ei n f o r m a t i o ni n c l u d i n g (ppk U,T A,cU,T A,
+cU,TA)will be published to the blockchain by the authority TA. In Figure
+1,w eb r i e  yd e s c r i b et h ea r c h i t e c t u r eo fab l o c k c h a i n - b a s e dd i g i t a le d u c a t i o n
+credential ( BDEC )s c h e m e .
+Fig. 1. The Architecture of A Blockchain-based Digital Education Credential Scheme.
+Assume that an IT graduate (say Bob) owns two credentials: one on at-
+tributes (Name: ABC, University: XYZ University, Degree: Bachelor of Software
+Engineering, Year: 2023, GPA: 4.8/5) approved by the XYZ University and a
+credential, and the other one on attributes (Name: ABC, Company: Q Tech, Job:
+Junior Software Engineer, Level: Internship, Duration: 3 months, Year: 2022).
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 7
+Considering that a technology company Vposts a software engineer job and Bob
+is willing to apply this job, in this scenario, Bob Uneeds to prove its capacity
+to the company Vto become short listed. Bob Urstly generates a pseudonym
+public and private key pair (ppk U,V,psk U,V)to communicate with the company
+V, and then it extracts a shown credential cU,Von a statement that  (ppk U,V
+has a bachelor degree and work experiences in Software Engineer from the XYZ
+University and a proof cU,Vfor the ownership of the shown credential cU,V. The
+company Vchecks the validity of the credential cU,V,a sw e l la st h ea s s o c i a t e d
+proof cU,V,a n da c c e p t st h e mt ot h eb l o c k c h a i ni fi tw o u l dl i k et o .
+Once the shown credential cU,V,t h ep r o o f cU,V,a n do t h e rr e l a t e di n f o r m a -
+tion (in one transaction between the student Uand the verier V)i si n c l u d e d
+in the blockchain, it is helpful for the student Uto avoid repeatedly proving the
+ownership of the same attributes to various veriers. Take the previous scenario
+as an example, Bob may need to apply several software engineer jobs posted by
+di"erent companies. Bob may not want to repeatedly generating the ownership
+proof cU,Vabout the shown credentials cU,Vproving the same statement about
+his eligibility. In this case, Bob Ucan simply generate a proof linking the pre-
+viously approved shown credential on the blockchain rather than a duplicate
+proof on the shown credential.
+3.2 Blockchain-Based Digital Education Credentials
+Ab l o c k c h a i n - b a s e dd i g i t a le d u c a t i o nc r e d e n t i a l BDEC scheme is composed of
+the following algorithms.
+(par,LR)Setup (1).T a k i n gt h es e c u r i t yp a r a m e t e r as the input, this
+algorithm, run by the system, outputs the public parameter parand an
+initially empty revocation list LR.
+(skU,p kU)PriGen (par).T a k i n gt h ep u b l i cp a r a m e t e r paras the input,
+this algorithm, run by each user U,o u t p u t sal o n gt e r mk e yp a i r (skU,p kU).
+Note that both the secret and public keys will remain hidden unless the user
+decides to publish pkUthrough the RevCre algorithm.
+(ppk U,T A,psk U,T A)NymKey (par,skU).T a k i n gt h ep u b l i cp a r a m e t e r par
+and the private user key skUas the input, this algorithm, run by the user
+(and authenticated by the trusted entity TA), outputs a pair of pseudonym
+public and private keys (ppk U,T A,psk U,T A).
+(cU,T A,cU,TA)CreGen (par,skU,pkU,ppk U,T A,psk U,T A,A,aux).T a k -
+ing the public parameter par,t h eu s e r  sl o n gt e r mk e yp a i r (skU,p kU),t h e
+pseudonym public and private key pair (ppk U,T A,psk U,T A)and an attribute
+setA(and the description auxof attributes A)a st h ei n p u t ,t h i sa l g o r i t h m ,
+run by the user U,o u t p u t sac r e d e n t i a l cU,T Afor attributes Aand a proof
+cU,TAproving the credential ownership.
+{0,1}CreV er (par,cU,T A,cU,TA,ppk U,T A,A,aux).T a k i n gt h ep u b l i c
+parameter par,t h ec r e d e n t i a l cU,T A,t h ep r o o f cU,TAfor the credential cU,T A,
+the pseudonym public key ppk U,T Aand the attributes A(as well as the
+description auxof attributes) as the input, this algorithm, run by the issuing
+authority, outputs 1 for a valid proof cU,TAor 0 otherwise.
+8Z . L i a n d X . Z h a n g e t a l .
+(cU,V,cU,V)ShowCre (par,skU,pkU,{ppk U,T A,psk U,T A,cU,T A,cskU,T A},
+A,aux).T a k i n gt h ep u b l i cp a r a m e t e r par,t h ep r i v a t eu s e rk e y skU,as e t
+of the pseudonym public key ppk U,T Aand private key psk U,T A,t h ec r e d e n -
+tialcU,T Aover attributes Aand the corresponding credential private key
+cskU,T A,t h i sa l g o r i t h m ,r u nb yt h eu s e r U, outputs a shown credential cU,V
+on attributes Aand the corresponding proof cU,Vfor the shown credential
+cU,V.
+{0,1}ShowV er (par,cU,V,cU,V,ppk U,T A,A,aux).T a k i n gt h ep u b l i c
+parameter par, the shown credential cU,Vover attribute Aand its proof
+cU,Vas the input, this algorithm, run by the verier V,o u t p u t s1f o ra
+valid poof cU,TAand 0 otherwise.
+pkULRRevCre (par,pkU,cU,T A).T a k i n gt h ep u b l i cp a r a m e t e r par,
+the users long term public key pkU,t h ec r e d e n t i a l cU,T Ato be revoked as
+the input, this algorithm, run by the user U,a d d s pkUto the revocation list
+LR.
+ABDEC scheme is correct if for any security parameter ,a l lp a r t i c i p a n t s
+run algorithms as above, it always hold CreV er (par,cU,T A,cU,TA,ppk U,T A,A,
+aux)1a n d ShowV er (par,cU,V,A,cU,V)1.
+3.3 Security Denitions
+ABDEC scheme must meet three basic security requirements, including unforge-
+ability, anonymity and unlinkability.
+Unforgeability . This means that anybody, without knowing the private
+user key of the student U,s h o u l dn o tb ea b l et of o r g eac r e d e n t i a l cU,T Aon
+behalf of the pseudonym public key established between the user Uand the
+trusted entity TA.
+We dene the security game of Unforgeability for the BDEC scheme between
+an adversary Aand a challenger Bas follows.
+Setup. The algorithm Bgenerates the public parameter paras in the
+Setup algorithm and sends partoA. In addition, Binitializes an empty
+listLUstoring each user Us long term key pair (skU,p kU),p s e u d o n y m
+key pair (ppk U,T A,psk U,T A),t h ec r e d e n t i a l cU,T Aon attributes A,a n d
+the credential proof cU,TAauthenticated by each trusted entity TA.
+Query. Aissues the following queries to the algorithm B.
+Asends a user-key queries to the PriGen oracle on a user U. If there
+exists a long term user key pair (skU,p kU)forUin the list LU,B
+responds with the corresponding key pair. Otherwise, Bgenerates
+(skU,p kU)by running the PriGen algorithm and adds the key pair
+(skU,p kU)to the list LU.Bsends (skU,p kU)toA.
+Asends a pseudonym key query to the NymKey oracle on a user U
+and a trusted entity TA. If there is already a pseudonym public and
+private key pair in the list LUbetween the user Uand the trusted en-
+tityTA,Bresponds with the pseudonym public key ppk U,T A.O t h e r -
+wise, Agenerates a pseudonym public and private key pair (ppk U,T A,
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 9
+psk U,T A)via running the NymKey algorithm, adds them to the
+listLU,a n ds e n d st h ep s e u d o n y mp u b l i ca n dp r i v a t ek e y (ppk U,T A,
+psk U,T A)toA.
+Asends a credential generation query to the CreGen oracle on a user
+U,a t t r i b u t e s (A,aux)and a trusted entity TA.Breturns a user
+credential cU,T AtoAif the credential cU,T Ais already in the list
+LU. Otherwise, Bruns the CreGen algorithm to create a credential
+cU,T Aover attributes A, along with the credential proof cU,TA.B
+adds them to the list LU,a n ds e n d st h ec r e d e n t i a la n dt h ep r o o f
+(cU,T A,cU,TA)toA.
+Output. Aoutputs a pseudonym public key ppk
+U,T Afor the user U,a n
+attribute set A,au s e rc r e d e n t i a l c
+U,T Aand a proof 
+cU,TAbetween the
+user Uand the trusted entity TA.Awins this game if CreV er (par,
+c
+U,T A,
+cU,TA,ppk
+U,T A,A,aux)= 1, and the following conditions
+hold.
+The user Uhas never been queried to the PriGen oracle, and
+ppk
+U,T Ais not the output of NymKey oracle, and
+c
+U,T Ais not the output of CreGen oracle.
+We say that the BDEC system is unforgeable if the advantage function re-
+ferring to the above security game
+AdvUNF
+BDEC=Pr[BDECA=1]
+is negligible in the security parameter for any probabilistic polynomial-time
+(PPT) adversary algorithm A.
+Anonymity . This means that given any pseudonym public key ppk U,T Aand
+the associated credential cU,T A,a n y b o d y ,s h o u l dn o tb ea b l et od i s t i n g u i s h
+the real identities of the user U.
+We dene the anonymity security game for the BDEC system between an
+adversary Aand a challenger Bas follows.
+Setup. The same as that in the Unforgeability game.
+Query 1. The same as that in the Unforgeability game except that Ais
+not allowed to issue queries to the PriGen oracle on users in the Challenge
+Phase.
+KeyGen. Asends to Bal i s to fa t t r i b u t e s A(along with the auxthat
+describes the attributes). On input the message from A,Brst generates
+two pseudonym key pairs (psk(0)
+U,T A,p p k(0)
+U,T A)and(psk(1)
+U,T A,p p k(1)
+U,T A).B
+forwards (psk(0)
+U,T A,psk(1)
+U,T A)toA.
+Query 2. The same as that in Query 1.
+Challenge. Brandomly selects b{0,1}and generates credential c(b)
+U,T A
+and credential proof (b)
+U,T Ausing psk(b)
+U,T A.Bforwards (ppk(b)
+U,T A,c(b)
+U,T A,
+(b)
+U,T A)toA.
+Query 3. The same as that in Query 1.
+Output. The algorithm Aoutputs a guess band wins this game if b=b.
+10 Z. Li and X.Zhang et al.
+We say that the BDEC system is anonymous if the advantage function refer-
+ring to the above security game
+AdvANON
+BDEC=|Pr[b=b]1/2|
+is negligible in the security parameter for any probabilistic polynomial-time
+(PPT) adversary algorithm A.
+Unlinkability. This considers the anonymity one step further, which means
+that given any two pseudonym public keys ppk U,Vand their corresponding
+credentials cU,V, anybody should not be able to tell whether they belong to
+the same user Uor not.
+We dene the unlinkability security game for BDEC between an adversary
+Aand a challenger Bas follows.
+Setup. The same as that in the Unforgeability game.
+Query 1. The same as that in the Unforgeability game except that Ais
+not allowed to issue queries to the PriGen oracle on users in the Challenge
+Phase.
+Challenge. The algorithm Bcreates two pseudonym key pairs (psk(0)
+U,V,p p k(0)
+U,V
+and(psk(1)
+U,V,p p k(1)
+U,V)and an attribute set A. Then, Brandomly selects
+b{0,1},a n dc r e a t e sac r e d e n t i a l c(b)
+U,Vwith respect to ppk(b)
+U,Von at-
+tributes A.Bforwards the credential c(b)
+U,Vto the algorithm A.
+Query 2. The same as that in Query 1.
+Output. The algorithm Aoutputs a guess band wins this game if b=b.
+We say that the BDEC scheme is unlinkable if the advantage function refer-
+ring to the above security game
+AdvUNL
+BDEC=|Pr[b=b]1/2|
+is negligible in the security parameter for any probabilistic polynomial-time
+(PPT) adversary algorithm A.
+In addition to the aforementioned three properties, we require the BDEC
+system to satisfy the conditional linkability and revocability.
+Conditional linkability. This serves two primary purposes: solving the issue
+of discontinuous learning records (fragmented learning) and avoiding repet-
+itive verication of the same attributes. First, Students often accumulate
+learning outcomes through various courses and platforms, leading to frag-
+mented records. Conditional linkability allows students to link these frag-
+mented records together, providing a continuous and coherent learning his-
+tory. Second, students may need to present the same attributes to di"erent
+veriers multiple times, requiring repeated generation of shown credentials
+and proofs. To reduce this workload, the BDEC scheme should be armed
+with a mechanism enabling students to reuse previous shown credentials
+and proofs. Specically, conditional linkability in the BDEC scheme allows
+students to link previous credentials and proofs to current ones, claiming
+ownership of the same attributes without regenerating them, as long as these
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 11
+credentials and proofs are included in the blockchain. If privacy is a concern,
+students can opt not to link, as their credentials and proofs under various
+pseudonyms on the blockchain do not reveal their real identities.
+Revocability. In the BDEC scheme, students need to store their private user-
+keys and pseudonym private keys in private. If any of those secrets is com-
+promised, all associated (shown) credentials need to become inaccessible im-
+mediately. To prevent any compromised credential from being continuously
+utilised by malicious entities, it is of necessity for the BDEC scheme to achieve
+Revocability such that students can disqualify their approved credentials if
+they found that their private keys might be compromised.
+4C o n s t r u c t i o n
+In this section, we detail a blockchain-based digital education credential system
+based on decentralized anonymous credential schemes, and analyze its security.
+4.1 A Generic Construction
+Below, we describe a generic construction of our BDEC system based on digital
+signature schemes and zkSNARKs. For denitions and further details of the
+building blocks, we refer readers to Section 2.
+parSetup (1).O ni n p u tas e c u r i t yp a r a m e t e r in unary, the algo-
+rithm runs Sig.ppSig.Setup (1)and crs S(1), where Sdenotes
+the setup algorithm of the underlying zkSNARK. The algorithm outputs
+par=(Sig.pp,crs).N o t et h a tw ea s s u m et h es e c u r i t yp a r a m e t e r is an
+implicit input to all later algorithms.
+(skU,p kU)PriGen (par).O ni n p u tt h ep u b l i cp a r a m e t e r s par=(Sig.pp,
+crs),t h ea l g o r i t h mr u n s (skU,p kU)Sig.KeyGen (Sig.pp)and outputs
+(skU,p kU). Note that both the secret and public keys will remain hidden
+unless the user decides to publish pkUthrough the RevCre algorithm.
+(ppk U,T A,psk U,T A)NymKey (par,skU).O ni n p u tt h ep u b l i cp a r a m e t e r s
+par=(Sig.pp,crs)and the users long term secret key skU,t h ea l g o r i t h m
+randomly selects the pseudonym public key ppk U,T A${0,1}. The al-
+gorithm computes the corresponding pseudonym secret key as psk U,T A
+Sig.Sign (Sig.pp,s kU,p p k)(i.e., the pskis the signature generated by treat-
+ingppkas a message and using skUas the signing key). Note that a user U
+can have as many pseudonym public and secret key pairs as it expects. For
+privacy concerns, the user Ucan use di"erent pseudonym public and private
+key pairs to communicate with di"erent TAs.
+(cU,T A,cU,TA)CreGen (par,skU,pkU,ppk U,T A,psk U,T A,A,aux).O n
+input the public parameter par=(Sig.pp,crs),u s e r  sl o n gt e r mk e yp a i r
+(skU,p kU),ap s e u d o n y mp u b l i ca n ds e c r e tk e yp a i r (ppk U,T A,p s k U,T A),al i s t
+of attributes A=(a1,...,a m)(together with attributes descriptions aux),
+the algorithm computes the credential cU,T ASig.Sign (Sig.pp,s kU,hU,T A).
+12 Z. Li and X.Zhang et al.
+Note that hU,T A=H(A)is the hash digest of all attributes, where the
+denition of the collision-resistant His dened in Sig.pp.F i n a l l y ,t h ea l -
+gorithm generates a proof cU,TAwith respect to the zkSNARK statement
+x=(cU,T A,hU,T A,p p k U,T A)and the witness w=(pkU,p s k U,T A):
+cU,TA=P(crs,x ,w ):
+Sig.Verify (Sig.pp,p kU,hU,T A,cU,T A)=1 
+Sig.Verify (Sig.pp,p kU,p p k U,T A,p s k U,T A)=1 .
+In other words, the circuit to be proven by zkSNARK is dened as the AND
+concatenation of two signature verication algorithms. The algorithm out-
+puts (cU,T A,cU,TA). The user may submit (cU,T A,cU,TA,A,a u x ,p p k U,T A)
+to the blockchain.
+{0,1}CreV er (par,cU,T A,cU,TA,ppk U,T A,A,aux).O ni n p u tt h ep u b -
+lic parameter par=(Sig.pp,crs),ac r e d e n t i a l cU,T Aon attributes A,a
+pseudonym public key ppk U,T A,ap r o o f cU,TA,a n dt h ea t t r i b u t e sd e s c r i p -
+tionaux,t h ea l g o r i t h mv e r i  e si f cU,TAis valid. In particular, the algorithm
+rst computes hU,T A=H(A). It then denes the NIZKPoK statement x=
+(cU,T A,hU,T A,p p k U,T A)and invokes the zkSNARK verier V(crs,x , cU,TA).
+The algorithm outputs 1 if and only if the zkSNARK verier algorithm V
+outputs 1. Otherwise, outputs 0. The TA nodes should only accepts the
+credential if and only if CreV er returns 1.
+(cU,V,cU,V)ShowCre (par,skU,pkU,{ppk U,T A,psk U,T A,cU,T A,cskU,T A},
+A,aux).A s s u m et h eu s e r Uowns a list of tuples (ppk U,T A,p s k U,T A,
+cU,T A,A),a n di ti n t e n d st op r o v et h ee l i g i b i l i t yo f A=(a1,...,a n)A
+to a verier V, where nattributes are embedded in k(kn)c r e d e n t i a l s
+{c(j)
+U,T A}k
+j=1.O ni n p u tt h ep u b l i cp a r a m e t e r s par=(Sig.pp,crs),u s e r  sl o n g
+term key pair (skU,p kU),al i s to ft h es e l e c t e dp s e u d o n y mp u b l i ck e y ppk U,T A
+and corresponding private key psk U,T A,t h ec r e d e n t i a l cU,T Aover attributes
+A, the algorithm rst generates pseudonym keys for communicating with
+the verier: (ppk U,V,p p k U,V)NymKey (par,skU). The user generates the
+credential cU,VSig.Sign (Sig.pp,s kU,hU,V)where hU,VH(A)and a
+proof cU,Vwith respect to statement x=( ( hj
+U,T A,p p k(j)
+U,T A)k
+j=1,hU,V,cU,V,
+ppk U,V)and witness w=( ( psk(j)
+U,T A)k
+j=1,p kU,p s k U,V):
+cU,V=P(crs,x ,w ):
+k
+j=1Sig.Verify (pkU,p p k(j)
+U,T A,p s k(j)
+U,T A)=1
+Sig.Verify (pkU,p p k U,V,p s k U,V)=1
+Sig.Verify (pkU,hU,V,cU,V)=1
+The circuit proven by NIZKPoK is k+2 AND concatenation of signature
+verication algorithm.
+Considering the list of attributes Amay need to be repeatedly prove to
+di"erent veriers. We would recommend rst uploading the tuple (cU,V,A,
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 13
+aux,c,V,ppk U,V)which was shown to verier Vto the blockchain. Then,
+for any future proofs on attributes Ato a distinct verier V,t h eu s e r Ucan
+generate a proof 
+cU,Vwith respect to the statement x=(ppk U,V,p p k
+U,V)
+and witness w=(pkU,p s k U,V,p s k
+U,V), where (ppk
+U,V,p p k
+U,V)NymKey (par,
+skU):
+
+cU,V=P(crs,x ,w ):
+Sig.Verify (pkU,p s k U,V,p p k U,V)=1
+Sig.Verify (pkU,p s k
+U,V,p p k
+U,V)=1
+The circuit is an AND concatenation of two signature verication algorithms.
+The user can simply append (
+c,V,p p k
+U,V)to the tuple which was already
+uploaded to blockchain.
+{0,1}ShowV er (par,cU,V,cU,V,ppk U,T A,A,aux).O ni n p u tt h ep u b l i c
+parameter par=(Sig.pp,crs), the shown credential cU,Vover attributes
+A=(a1,...,a n)(together with aux,t h ea t t r i b u t e sd e s c r i p t i o n ) ,ap r o o f
+of credential possession cU,V, and the pseudonym public key attached with
+each credential ppk U,T A,t h ea l g o r i t h mv e r i  e si f cU,Vis valid. In particular,
+the algorithm computes hU,VH(A)andh(j)
+U,T AH(A)forj[k]. It de-
+nes the zkSNARK statement x=( ( h(j)
+U,T A,p p k(j)
+U,T A)k
+j=1,hU,V,cU,V,p p k U,V)
+and invokes the zkSNARK verier algorithm V(crs,x , cU,V). The algorithm
+returns 1 if and only if the zkSNARK verier returns 1. Otherwise, the al-
+gorithm returns 0.
+pkULRRevCre (par,pkU,cU,T A).O ni n p u tt h ep u b l i cp a r a m e t e r par,
+the users long term public key pkU,t h ec r e d e n t i a l cU,T Ato be revoked, this
+algorithm publishes pkUand adds pkUto the revocation list LR.F o ra n y
+future submission (cU,V,cU,V,A,a u x )to the blockchain, the verier node
+Vselects a public key pkUfrom the list LUand then run an initial check
+on the proof about the pseudonym public key: Sig.Verify (pkU,cU,V,hU,V),
+where hU,VH (A). If there exists pkUthat makes the verication pass
+(Sig.Verify returns 1), the submission will be rejected.
+4.2 Security Analysis
+Theorem 1 (Unforgeability). The BDEC system is unforgeable under the as-
+sumption that the underlying signature scheme is existentially unforgeable under
+chosen-message attacks (EUF-CMA) and that the underlying zkSNARK proof
+system is knowledge sound.
+Proof sketch :A s s u m et h ea d v e r s a r yi sa b l et of o r g et h ec r e d e n t i a la n dc r e d e n -
+tial proof (without users long term secret and public key), then it means the
+adversary must either forge a valid signature or forge a valid zkSNARK proof.
+14 Z. Li and X.Zhang et al.
+Theorem 2 (Anonymity). The BDEC system is anonymous under the as-
+sumption that both the underlying signature scheme and the zkSNARK are zero-
+knowledge.
+Proof Sketch :S i n c ep s e u d o n y mp u b l i ck e y sa r ej u s tr a n d o mb i ts t r i n g sc h o s e n
+by the user, no one should be able to identify the read signer based on these
+pseudonym public keys. Furthermore, since the signature and zkSNARK are
+both zero-knowledge, the credential and the credential proof should not leak
+any information about users real identity.
+Theorem 3 (Unlinkability). The BDEC system is unlinkable under the as-
+sumption that both the underlying signature scheme and the zkSNARK are zero-
+knowledge.
+Proof Sketch : The pseudonym public keys should not be linked to the same user
+as they are random bit strings. Since the signature scheme is randomized and
+the zkSNARK is zero-knowledge, the credential and the credential proof should
+not be linked to the same user.
+We show the formal security proofs of unforgeability, anonymity, and unlink-
+ability in Appendix A.
+Conditional Linkability. In the ShowCre algorithms, the user Uis able
+to link any pseudonym public keys in the proof by showing that two pseudonym
+keys are generated with the same long term secret key. Thus, for any previously
+proven attributes (which have been accepted by the blockchain), the user Uhas
+the capability to include them in the current credential shown process without
+proving the ownership of those attributes for a second time.
+Revocability. The RevCre algorithm supports the credential revocation.
+Once the user Unds out that its private user key skUis lost or leaked, the user
+Ucan publish the corresponding public user key pkUto the revocation list LR.
+For any submitted credential cU,Vand the proof U,V, the verier nodes will run
+the signature verication algorithm to check whether the submitted credential
+cU,Vis a valid signature with respect to any public key pkUin the list LR.
+We further discuss the approach to achieve hidden attributes from verier in
+Appendix B.
+4.3 Symmetric-Key Primitives Based Post-Quantum Instantiation
+We describe the post-quantum instantiation of our BDEC system using the state-
+of-the-art SNARK-friendly signature scheme Loquat [28]. The security of Lo-
+quat relies solely on collision-resistant hash functions and the Legendre PRF,
+making it post-quantum secure. The primary advantage of Loquat is its bal-
+anced performance between signature size/speed and SNARK-friendliness. Since
+our framework requires the user to prove signature validity during CreGen and
+ShowCre ,i ti sc r u c i a lt h a tt h eu n d e r l y i n gs i g n a t u r es c h e m eh a sar e l a t i v e l y
+small verication circuit. Although one-time signatures such as Lamport+ [ 14]
+have better verication complexity, they are unsuitable for system instantiation
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 15
+because the user needs a long-term key pair for signature generation. It is im-
+practical for the user to maintain a state that ensures one-time secret keys are
+never reused.
+We instantiate the zkSNARK with Aurora [ 1]a n dF r a c t a l[ 5], which rely
+solely on collision-resistant hash functions and features a transparent setup. Both
+zkSNARKs has proof size polylogarithmic in the circuit size it proves, ensuring
+small overhead for the credential proof generated in ShowCre , especially when
+the number of TAs is large. Thus, the system is highly scalable. Furthermore, by
+leveraging recursive proof generation of Fractal, the credential proof produced
+byShowCre can maintain a size independent of the number of involved TAs.
+5P e r f o r m a n c e E v a l u a t i o n
+To provide a general idea of the performance of our proposed BDEC system, we
+analyse two main metrics, namely credential size and running time for CreGen ,
+CreV er ,ShowCre ,a n d ShowV er algorithms.
+ForCreGen ,t h er u n n i n gt i m ei sm a i n l yd e p e n d i n go nt h es i g n i n gt i m ef o r
+the signature and the time for generating the zkSNARK proof for the veri-
+cation of two signatures. In this analysis, we take Loquat [ 28]a n dA u r o r a[ 1]
+as concrete signature and zkSNARK schemes for our generic construction. The
+signing time for Loquat signature is O(), where is the system security pa-
+rameter. The proof generation time for Aurora is O(NlogN), where Nis the
+number of gates in the circuit. Since Nis a polynomial of , this can be written
+asO(poly() log ). Correspondingly, the running time for CreV er is mainly de-
+pending on the verication time for the zkSNARK proof, and for Aurora it is
+O(N),o rO(poly()).
+Similarly, for showCre the running time is mainly depending on the signing
+time for the signature and the time for generating the zkSNARK proof for the
+verication of k+2 signatures. In this case, the signing time is O()and the
+proof generation time is O(kpoly() log ), where is the system security
+parameter and kis the number of TAs involved and in the worst case k=|A|.
+Correspondingly, the running time for ShowV er is mainly depending on the
+verication time for the zkSNARK proof, hence O(kpoly()).
+For credential size, it is depending on the sizes of the signature and the zk-
+SNARK proof. Table 2shows empirical data for the running times and credential
+sizes with 100 bit security, for di"erent kvalues. We note that the performances
+get less practical when the parameter kincreases to a relatively large value. How-
+ever, this is due to the performances of the state-of-the-art zkSNARK schemes.
+Given that our proposed construction is generic and modular, this can be im-
+proved by switching the zkSNARK component to a future scheme with better
+prover time, verier time and proof size.
+Table 3compares the concrete performance of our scheme, instantiated with
+Loquat and Aurora, to the previously proposed post-quantum anonymous cre-
+dential system in [ 12]. To ensure a fair comparison, we use Loquat with 128-bit
+security. For the credential proof size comparison, we assume both the number of
+16 Z. Li and X.Zhang et al.
+Aurora Fractal Fractal-R (est.)
+k=2 6 14 30 62 2 6 14 2 6 14 30
+tI(s) - - - - - 33 88 218 5K 13K 32K 32K
+tP(s) 14 33 67 160 553 119 251 556 3K 6K 14K 14K
+tV(s) 2.4 4.3 10 20 62 0.2 0.47 0.78 2.4 5.64 9.6 9.6
+||(KB) 126 137 182 197 207 131 140 145 131 140 145 145
+Table 2. Performance of Credential Proof in ShowCre using Aurora, Fractal, and
+Recursive Fractal (Fractal-R) (adapted from [ 28,T a b l e5 ] ) . tI=i n d e x e rt i m e , tP=
+proving time, tV=v e r i  c a t i o nt i m e , k=t h en u m b e ro fT A si n v o l v e d .
+attributes and TAs to be 10, aligning with the assumptions in [ 12]. It is impor-
+tant to note that in practice, the number of TAs is often greately smaller than
+the number of attributes, and the credential proof size in our scheme depends
+only on the number of TAs, not the number of attributes.
+Scheme |pkU| |skU| |ppk U| |psk U| |c| || Assump.
+[12] 9,789 10,844 - - 317 724 Lattice
+Ours 4 0.125 0.125 57 57 150 SK
+Table 3. Concrete Performance Comparison of Post-Quantum Anonymous Credential
+Systems. |pkU|&|skU|:U s e r  sl o n gt e r mp u b l i c - s e c r e tk e yp a i r s ; |ppk U|&|psk U|:
+Users pseudonym public-secret key pairs; |c|:c r e d e n t i a ls i z e ; ||:c r e d e n t i a lp r o o fs i z e .
+All sizes are in KB. SK denotes Symmetric-Key Based Assumptions (Legendre PRF
+and Collision-Resistant Hash).
+6C o n c l u s i o n s
+In this work, we propose a generic framework for an anonymous credential sys-
+tem. The framework requires only two building blocks: a digital signature scheme
+and a zkSNARK. We demonstrate that our framework satises unforgeabil-
+ity, anonymity, and unlinkability with formal security proofs. Additionally, our
+framework achieves conditional linkability and revocability, two features absent
+in existing works.
+By instantiating the framework with the post-quantum signature scheme Lo-
+quat [28]a n dt h ep o s t - q u a n t u mz k S N A R Kn a m e dA u r o r a[ 1], we obtain a post-
+quantum anonymous credential system whose security relies solely on collision-
+resistant hash functions and the Legendre PRF. The concrete performance of
+the resulting system is signicantly more practical than existing anonymous cre-
+dential systems based on lattices [ 12].
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 17
+References
+1.Ben-Sasson, E., Chiesa, A., Riabzev, M., Spooner, N., Virza, M., Ward, N.P.: Au-
+rora: Transparent succinct arguments for r1cs. In: Eurocrypt. pp. 103128. Springer
+(2019)
+2.Blazy, O., Chevalier, C., Renaut, G., Ricosset, T., Sageloli, E., Senet, H.: E!cient
+implementation of a post-quantum anonymous credential protocol. In: Proceed-
+ings of the 18th International Conference on Availability, Reliability and Security.
+Association for Computing Machinery, New York, NY, USA (2023). https://doi.
+org/10.1145/3600160.3600188 ,https://doi.org/10.1145/3600160.3600188
+3.Camenisch, J., Lysyanskaya, A.: A signature scheme with e!cient protocols. In:
+Security in Communication Networks: Third International Conference, SCN 2002
+Amal, Italy, September 1113, 2002 Revised Papers 3. pp. 268289. Springer
+(2003)
+4.Chaum, D.: Security without identication: Transaction systems to make big
+brother obsolete. Communications of the ACM 28(10), 10301044 (1985)
+5.Chiesa, A., Ojha, D., Spooner, N.: Fractal: Post-quantum and transparent recursive
+proofs from holography. In: Eurocrypt. pp. 769793. Springer (2020)
+6.Cuccuru, P.: Beyond bitcoin: an early overview on smart contracts. Int. J. Law
+Inf. Technol. 25(3), 179195 (2017). https://doi.org/10.1093/IJLIT/EAX003 ,
+https://doi.org/10.1093/ijlit/eax003
+7.Damgrd, I., Ganesh, C., Khoshakhlagh, H., Orlandi, C., Siniscalchi, L.: Bal-
+ancing privacy and accountability in blockchain identity management. In: Pater-
+son, K.G. (ed.) Topics in Cryptology - CT-RSA 2021 - Cryptographers Track
+at the RSA Conference 2021, Virtual Event, May 17-20, 2021, Proceedings.
+Lecture Notes in Computer Science, vol. 12704, pp. 552576. Springer (2021).
+https://doi.org/10.1007/978-3-030-75539-3_23 ,https://doi.org/10.1007/
+978-3-030-75539-3_23
+8.Dutto, S., Margaria, D., Sanna, C., Vesco, A.: Toward a post-quantum zero-
+knowledge veriable credential system for self-sovereign identity. Cryptology ePrint
+Archive (2022)
+9.European Commission: A european approach to micro-credentials: Fi-
+nal report (2020), https://education.ec.europa.eu/education-levels/
+higher-education/micro-credentials
+10.Fitzgerald, R., Huijser, H.: The opportunities and challenges in the portability and
+authentication of micro-credentials and short courses in a post-covid landscape.
+Technology-Enhanced Learning and the Virtual University pp. 465477 (2023)
+11.Garman, C., Green, M., Miers, I.: Decentralized anonymous credentials. IACR
+Cryptol. ePrint Arch. 2013 ,6 2 2 ( 2 0 1 4 ) , https://api.semanticscholar.org/
+CorpusID:6055016
+12.Jeudy, C., Roux-Langlois, A., Sanders, O.: Lattice signature with e!cient pro-
+tocols, application to anonymous credentials. Cryptology ePrint Archive, Paper
+2022/509 (2022), https://eprint.iacr.org/2022/509 ,https://eprint.iacr.
+org/2022/509
+13.Kazmi, R.A., Le, D.P., Minwalla, C.: Privacy-preserving post-quantum credentials
+for digital payments. In: International Conference on Financial Cryptography and
+Data Security. pp. 118137. Springer (2022)
+14.Khaburzaniya, I., Chalkias, K., Lewi, K., Malvai, H.: Aggregating and thresholdiz-
+ing hash-based signatures using starks. In: AsiaCCS. ACM (2022)
+18 Z. Li and X.Zhang et al.
+15.Khare, V.: Indian students face exit from canada over fake papers (March 18 2023),
+https://www.bbc.com/news/world-us-canada-65898527 ,b B CH i n d i
+16.Li, Z.Z., Wang, H., Gasevic, D., Yu, J., Liu, J.K.: Enhancing blockchain adoption
+through tailored software engineering: An industrial-grounded study in education
+credentialing. Distributed Ledger Technologies: Research and Practice 2(4), 124
+(2023)
+17.Manoj, T., Makkithaya, K., Narendra, V.: A blockchain-based credentials for food
+traceability in agricultural supply chain. In: 2023 IEEE International Conference
+on Distributed Computing, VLSI, Electrical Circuits and Robotics (DISCOVER).
+pp. 1924. IEEE (2023)
+18.Musamih, A., Yaqoob, I., Salah, K., Jayaraman, R., Omar, M., Ellahham, S.: Using
+nfts for product management, digital certication, trading, and delivery in the
+healthcare supply chain. IEEE Transactions on Engineering Management (2022)
+19.Nitulescu, A.: zk-snarks: A gentle introduction. Ecole Normale Superieure (2020)
+20.Parameswarath, R.P., Gope, P., Sikdar, B.: User-empowered privacy-preserving
+authentication protocol for electric vehicle charging based on decentralized identity
+and veriable credential. ACM Transactions on Management Information Systems
+(TMIS) 13(4), 121 (2022)
+21.Ru!ng, T.: Cryptography for Bitcoin and friends. Ph.D. thesis, Saarland Univer-
+sity, Germany (2020), https://d-nb.info/1209947285
+22.Sarkar, S.: Indias fake degrees: Hundreds in singapore, malaysia, us,
+canada left questioning qualications after manav bharti university scandal
+(March 3 2021), https://www.scmp.com/week-asia/people/article/3123929/
+indias-fake-degrees-hundreds-singapore-malaysia-us-canada-left ,s o u t h
+China Morning Post
+23.Selvaratnam, R.M., Sankey, M.D.: An integrative literature review of the imple-
+mentation of micro-credentials in higher education: Implications for practice in
+australasia. Journal of Teaching and Learning for Graduate Employability 12(1),
+117 (2021)
+24.Shi, R., Feng, H., Yang, Y., Yuan, F., Li, Y., Pang, H.H., Deng, R.H.: Thresh-
+old attribute-based credentials with redactable signature. IEEE Transactions on
+Services Computing (2023)
+25.Shrivas, M.K., Kachhwaha, S., Bhansali, A., Singh, S.V.: Quantum-resistant uni-
+versity credentials verication system on blockchain. In: 2022 IEEE Nigeria 4th
+International Conference on Disruptive Technologies for Sustainable Development
+(NIGERCON). pp. 16. IEEE (2022)
+26.Sonnino, A., Al-Bassam, M., Bano, S., Meiklejohn, S., Danezis, G.: Coconut:
+Threshold issuance selective disclosure credentials with applications to distributed
+ledgers. arXiv preprint arXiv:1802.07344 (2018)
+27.UpGuard: The 72 biggest data breaches of all time (2023), https://www.upguard.
+com/blog/biggest-data-breaches ,a c c e s s e d :2 0 2 3 - 1 0 - 1 7
+28.Zhang, X., Steinfeld, R., Esgin, M.F., Liu, J.K., Liu, D., Ruj, S.: Loquat: A
+SNARK-friendly post-quantum signature based on the legendre PRF with applica-
+tions in ring and aggregate signatures. Cryptology ePrint Archive, Paper 2024/868
+(2024), https://eprint.iacr.org/2024/868
+29.Zhuang, C., Dai, Q., Zhang, Y.: Bcppt: A blockchain-based privacy-preserving and
+traceability identity management scheme for intellectual property. Peer-to-Peer
+Networking and Applications 15(1), 724738 (2022)
+BDEC: Enhancing Learning Credibility via Post-Quantum Digital Credential 19
+Appendix
+AS e c u r i t y P r o o f s
+A.1 Proof of Theorem 1: Unforgeability
+Proof. Assume there exists an adversary Athat wins the unforgeability game
+with non-negligible probability ,w es h o wt h a tt h e r ee x i s t sa na l g o r i t h m Bthat
+can break the EUF-CMA of the underlying signature scheme with probability
+at least , where is the knowledge error of the zkSNARK.
+LetAoutput a tuple (ppk
+U,T A,A,cU, TA, 
+cU,TA)such that CreV er (par,
+c
+U,T A,
+cU,TA,ppk
+U,T A,A,aux)= 1. Recall that the CreV er ()algorithm
+invokes the zkSNARK verication algorithm V(crs,x,
+cU,TA), where x=
+(c
+U,T A,h
+U,T A,p p k
+U,T A)forh
+U,T A=H(A).S i n c et h ep r o o f 
+cU,TAis valid and
+the zkSNARK is knowledge sound, there exists a polynomial time extractor of
+the zkSNARK that can extract a valid witness w=(pk
+U,p s k
+U,T A)with proba-
+bility at least , where denotes the knowledge error of the zkSNARK. In
+other words, the extractor outputs a valid signature psk
+U,T Awith respect to the
+message ppk
+U,T Aand the signing key skU,b r e a k i n gt h ee x i s t e n t i a lu n f o r g e a b i l i t y
+of the underlying signature scheme. 
+A.2 Proof of Theorem 2:A n o n y m i t y
+Proof. We construct a simulator Sthat outputs an indistinguishable transcript
+(including the pseudonym key, the credential, and the credential proof) from the
+real transcript generated by CreGen .A s s u m et h a to u rs i m u l a t o r Shas black
+box access to the signatures simulator algorithm, denoted as S.
+On input the adversary messages Aandaux,t h es i m u l a t o r Sselects a ran-
+dom long term public key pk
+Uand a random pseudonym public key ppk
+U,T A.
+Sinvokes the signature simulator Swith input (ppk
+U,T A,p k
+U)to generate a
+simulated signatures psk
+U,T A.N o t et h a tp s e u d o n y mk e yp a i r (psk
+U,T A,p p k
+U,T A)
+is indistinguishable from the real pseudonym key pairs as the signature scheme
+is zero-knowledge. Similarly, to simulate the credential, Sinvokes Swith inputs
+(h
+U,T A,p k
+U), where h
+U,T A=H(A).U n d e rt h es a m er e a s o n ,t h es i m u l a t e dc r e -
+dential is indistinguishable from the real credential owing to zero-knowledgeness
+of the signature scheme.
+Finally, Sruns the zkSNARK prover algorithm 
+cU,TAP(crs,x ,w )with
+respect to the statement x=(c
+U,T A,h
+U,T A,p p k
+U,T A)and witness w=(pk
+U,p s k
+U,T A).
+As the proof is honestly generated, both psk
+U,T Aandc
+U,T Aare valid signatures,
+the credential proof 
+cU,TAis valid. Furthermore, due to the zkSNARK achieves
+zero-knowledge, the proof hides pk
+U.
+Note that if the underlying signature scheme and zkSNARK achieve perfect
+zero-knowledge, then our system achieves perfect anonymous (i.e., the simulated
+transcript is perfectly indistinguishable from the real transcript). 
+20 Z. Li and X.Zhang et al.
+A.3 Proof of Theorem 3:U n l i n k a b i l i t y
+Proof. We construct a simulator Sthat outputs an indistinguishable transcript
+(the pseudonym key, the credential, and the credential proof) from the real
+transcript generated from ShowCre .A s s u m et h a to u rs i m u l a t o r Shas black
+box access to the signatures simulator algorithm and zkSNARKs simulator
+algorithm, denoted as SandS,r e s p e c t i v e l y .
+The simulator Sselects a random long term public key pk
+Uand a random
+pseudonym public key ppk
+U,V.Sinvokes the signature simulator Swith input
+(ppk
+U,V,p k
+U)to generate a simulated signatures psk
+U,V.N o t et h a tp s e u d o n y m
+key pair (psk
+U,V,p p k
+U,V)is indistinguishable from the real pseudonym key pairs
+as the signature scheme is zero-knowledge. Similarly, to simulate the credential,
+Sinvokes Swith inputs (h
+U,V,p k
+U), where h
+U,V=H(A).U n d e rt h es a m er e a -
+son, the simulated credential is indistinguishable from the real credential owing
+to zero-knowledgeness of the signature scheme.
+Finally, Sinvokes the zkSNARK simulator Son input (crs,x), where x=
+((h(j)
+U,T A,p p k(j)
+U,T A),h
+U,V,c
+U,V,p p k
+U,V)to obtain a simulated proof 
+cU,V. The
+proof is indistinguishable from the real proof due to the zero-knowledgeness of
+the underlying zkSNARK.
+Note that if the underlying signature scheme and zkSNARK achieve perfect
+zero-knowledge, then our system achieves perfect unlinkability (i.e., the simu-
+lated transcript is perfectly indistinguishable from the real transcript). 
+BH i d d e n A t t r i b u t e s f r o m V e r i  e r
+In our BDEC system, we assume users publishes the credential, credential proof,
+along with all attributes to the public ledger (e.g., blockchain). Given that many
+attributes cover general information without sensitive data, this is su!cient for
+many applications. Nevertheless, there might exist scenarios where a user would
+like to hide attributes shown to veriers in ShowV er phase. We recommend the
+system to incorporate the Merkle tree accumulator to enforce such requirement.
+To be specic, in the CreGen algorithm, instead of signing the hash digest of
+all attributes, the user signs the Merkle root of the accumulated attributes (i.e.,
+treating each attribute as a leaf of the tree). Then, the user only needs to publish
+the Merkle root, credential, and credential proof on chain. The proof can still
+be veried by TA if we assume TAs have full list of attributes of each user. If
+the user wants to show a subsets of attributes to a verier, it can produces an
+authentication path (a.k.a. the membership proof) for each attribute. Hence, the
+verier can e"ectively verify whether provided attributes were approved by TA,
+without knowing any additional attributes outside of the subset.
+View publication stats
