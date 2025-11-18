@@ -10,28 +10,49 @@
 //! - Algorithm 4-6: Signature Generation Workflow
 //! - Algorithm 7: Signature Verification
 
+pub mod encoding;
 pub mod errors;
-pub mod field_utils;
-pub mod setup;
-pub mod keygen;
-pub mod iop_key_id;
-pub mod sumcheck;
-pub mod sign;
-pub mod verify;
-pub mod field_p127;
-pub mod merkle;
-pub mod ldt;
 pub mod fft;
+pub mod field_p127;
+pub mod field_utils;
+#[cfg(feature = "guest")]
+pub mod guest;
+#[cfg(feature = "std")]
+pub mod iop_key_id;
+#[cfg(feature = "std")]
+pub mod keygen;
+pub mod ldt;
+pub mod merkle;
+pub mod setup;
+pub mod sign;
+pub mod sumcheck;
+pub mod transcript;
+pub mod verify;
 
+#[cfg(feature = "std")]
 pub mod benchmark;
+#[cfg(feature = "std")]
 pub mod tests;
 
 // Re-export core types for convenience
 pub use errors::{LoquatError, LoquatResult};
-pub use setup::{LoquatPublicParams, loquat_setup};
+#[cfg(feature = "std")]
+pub use setup::loquat_setup;
+pub use setup::LoquatPublicParams;
 
-pub use sign::{LoquatSignature, loquat_sign};
+#[cfg(feature = "std")]
+pub use benchmark::{BenchmarkConfig, HashType, LoquatBenchmark, PerformanceMetrics};
+#[cfg(feature = "guest")]
+pub use guest::loquat_verify_guest;
+#[cfg(feature = "std")]
+pub use iop_key_id::{iop_key_identification, verify_iop_proof, IOPInstance, IOPProof, IOPWitness};
+#[cfg(feature = "std")]
+pub use keygen::{keygen_with_params, LoquatKeyPair};
+#[cfg(feature = "std")]
+pub use sign::loquat_sign;
+pub use sign::LoquatSignature;
+#[cfg(feature = "std")]
+pub use sumcheck::generate_sumcheck_proof;
+pub use sumcheck::{verify_sumcheck_proof, UnivariateSumcheckProof};
+pub use transcript::Transcript;
 pub use verify::loquat_verify;
-pub use iop_key_id::{IOPProof, IOPInstance, IOPWitness, iop_key_identification, verify_iop_proof};
-pub use sumcheck::{UnivariateSumcheckProof, generate_sumcheck_proof, verify_sumcheck_proof};
-pub use benchmark::{LoquatBenchmark, BenchmarkConfig, PerformanceMetrics, HashType};

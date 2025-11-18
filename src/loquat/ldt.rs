@@ -1,5 +1,7 @@
-use serde::{Serialize, Deserialize};
 use super::field_utils::F2;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LDTProof {
