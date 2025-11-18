@@ -1,10 +1,27 @@
+#[cfg(feature = "std")]
 use super::errors::{LoquatError, LoquatResult};
 use super::field_utils::{F, F2};
-use rand::Rng;
+#[cfg(not(feature = "std"))]
+use alloc::{string::String, vec::Vec};
+#[cfg(feature = "std")]
+use rand::{Rng, SeedableRng};
+#[cfg(feature = "std")]
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "std")]
+use sha2::{Digest, Sha256};
+#[cfg(feature = "std")]
+use std::{
+    collections::HashSet,
+    string::{String, ToString},
+    vec::Vec,
+};
 
+#[cfg(feature = "std")]
 const MAX_GENERATOR_ATTEMPTS: usize = 1 << 16;
+#[cfg(feature = "std")]
 const FP2_TWO_ADIC_EXPONENT: usize = 128;
+#[cfg(feature = "std")]
 const FP2_ODD_COFACTOR: u128 = (1u128 << 126) - 1;
 
 /// Public parameters for the Loquat signature scheme.
@@ -43,6 +60,7 @@ pub struct HashFunctionDescriptor {
     pub domain_separator: Vec<u8>,
 }
 
+#[cfg(feature = "std")]
 impl std::fmt::Display for LoquatPublicParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "Loquat Public Parameters:")?;
@@ -60,14 +78,11 @@ impl std::fmt::Display for LoquatPublicParams {
         writeln!(f, "  - LDT Rate Numerator (ρ*_num): {}", self.rho_star_num)?;
         writeln!(f, "  - LDT Rounds (r): {}", self.r)?;
         writeln!(f, "  - Hash Functions: {} total", self.hash_functions.len())?;
-        writeln!(
-            f,
-            "  - Public Indices: {} total",
-            self.public_indices.len()
-        )
+        writeln!(f, "  - Public Indices: {} total", self.public_indices.len())
     }
 }
 
+#[cfg(feature = "std")]
 fn generate_hash_functions(count: usize) -> Vec<HashFunctionDescriptor> {
     (1..=count)
         .map(|i| {
@@ -77,16 +92,21 @@ fn generate_hash_functions(count: usize) -> Vec<HashFunctionDescriptor> {
                 format!("H_{}", i)
             };
             let domain_separator = format!("Loquat/{}", label).into_bytes();
-            HashFunctionDescriptor { label, domain_separator }
+            HashFunctionDescriptor {
+                label,
+                domain_separator,
+            }
         })
         .collect()
 }
 
+#[cfg(feature = "std")]
 fn log2_pow2(value: usize) -> usize {
     debug_assert!(value.is_power_of_two());
     (usize::BITS - 1 - value.leading_zeros()) as usize
 }
 
+#[cfg(feature = "std")]
 fn find_generator_for_power(power: usize, rng: &mut impl Rng) -> LoquatResult<F2> {
     if power == 0 {
         return Ok(F2::one());
@@ -125,6 +145,7 @@ fn find_generator_for_power(power: usize, rng: &mut impl Rng) -> LoquatResult<F2
     ))
 }
 
+#[cfg(feature = "std")]
 fn generate_coset_elements(generator: F2, size: usize, shift: F2) -> Vec<F2> {
     let mut elements = Vec::with_capacity(size);
     let mut accumulator = F2::one();
@@ -135,10 +156,8 @@ fn generate_coset_elements(generator: F2, size: usize, shift: F2) -> Vec<F2> {
     elements
 }
 
-fn build_power_of_two_coset(
-    size: usize,
-    rng: &mut impl Rng,
-) -> LoquatResult<(Vec<F2>, F2, F2)> {
+#[cfg(feature = "std")]
+fn build_power_of_two_coset(size: usize, rng: &mut impl Rng) -> LoquatResult<(Vec<F2>, F2, F2)> {
     if !size.is_power_of_two() {
         return Err(LoquatError::invalid_parameters(
             "coset size must be a power of two",
@@ -151,40 +170,90 @@ fn build_power_of_two_coset(
     Ok((elements, generator, shift))
 }
 
+#[cfg(feature = "std")]
 fn cosets_intersect(a: &[F2], b: &[F2]) -> bool {
     a.iter().any(|x| b.iter().any(|y| x == y))
 }
 
+#[cfg(feature = "std")]
+fn derive_seed(label: &str, lambda: usize) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"LoquatSetupSeed");
+    hasher.update(label.as_bytes());
+    hasher.update((lambda as u64).to_le_bytes());
+    let digest = hasher.finalize();
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&digest);
+    seed
+}
+
+#[cfg(feature = "std")]
+fn init_rng(label: &str, lambda: usize) -> ChaCha20Rng {
+    ChaCha20Rng::from_seed(derive_seed(label, lambda))
+}
+
+#[cfg(feature = "std")]
+fn sample_distinct_public_indices(rng: &mut impl Rng, count: usize) -> Vec<F> {
+    let mut indices = Vec::with_capacity(count);
+    let mut seen = HashSet::with_capacity(count);
+    while indices.len() < count {
+        let candidate = F::rand(rng);
+        if seen.insert(candidate) {
+            indices.push(candidate);
+        }
+    }
+    indices
+}
+
+#[cfg(feature = "std")]
 pub fn loquat_setup(lambda: usize) -> LoquatResult<LoquatPublicParams> {
-    println!("\n================== ALGORITHM 2: LOQUAT SETUP ==================");
-    println!("INPUT: Security Parameter λ = {}", lambda);
+    loquat_debug!("\n================== ALGORITHM 2: LOQUAT SETUP ==================");
+    loquat_debug!("INPUT: Security Parameter λ = {}", lambda);
 
-    let mut rng = rand::thread_rng();
+    let mut rng = init_rng("loquat-setup", lambda);
 
-    println!("\n--- STEP 2: Public Parameters for Legendre PRF ---");
+    loquat_debug!("\n--- STEP 2: Public Parameters for Legendre PRF ---");
     let l = match lambda {
         128 => 256,
         192 => 384,
         256 => 512,
-        _ => return Err(LoquatError::invalid_parameters("Unsupported security level.")),
+        _ => {
+            return Err(LoquatError::invalid_parameters(
+                "Unsupported security level.",
+            ))
+        }
     };
-    println!("✓ L (public key bits): {} (derived from λ={})", l, lambda);
+    loquat_debug!("✓ L (public key bits): {} (derived from λ={})", l, lambda);
 
     let b = l / 4;
-    println!("✓ B (challenged residuosity symbols): {} (B ≤ L constraint satisfied)", b);
+    loquat_debug!(
+        "✓ B (challenged residuosity symbols): {} (B ≤ L constraint satisfied)",
+        b
+    );
 
-    let public_indices: Vec<F> = (0..l).map(|_| F::rand(&mut rng)).collect();
-    println!("✓ I = {{I₁, ..., I_L}}: Generated {} random field elements from F_p", public_indices.len());
+    let public_indices = sample_distinct_public_indices(&mut rng, l);
+    loquat_debug!(
+        "✓ I = {{I₁, ..., I_L}}: Generated {} random field elements from F_p",
+        public_indices.len()
+    );
 
     let m = 16;
     let n = (b + m - 1) / m;
-    println!("✓ m (degree bound): {} (power of 2 requirement satisfied)", m);
-    println!("✓ n (parallel executions): {} (where m * n = {} ≥ B = {})", n, m * n, b);
+    loquat_debug!(
+        "✓ m (degree bound): {} (power of 2 requirement satisfied)",
+        m
+    );
+    loquat_debug!(
+        "✓ n (parallel executions): {} (where m * n = {} ≥ B = {})",
+        n,
+        m * n,
+        b
+    );
 
-    println!("\n--- STEP 3: Public Parameters for Univariate Sumcheck and LDT ---");
+    loquat_debug!("\n--- STEP 3: Public Parameters for Univariate Sumcheck and LDT ---");
 
     let eta = 2;
-    println!("✓ η (localization parameter): {}", eta);
+    loquat_debug!("✓ η (localization parameter): {}", eta);
 
     let kappa = match lambda {
         128 => 80,
@@ -192,14 +261,17 @@ pub fn loquat_setup(lambda: usize) -> LoquatResult<LoquatPublicParams> {
         256 => 128,
         _ => 80,
     };
-    println!("✓ κ (query repetition parameter): {}", kappa);
+    loquat_debug!("✓ κ (query repetition parameter): {}", kappa);
 
     let min_rate_denominator: usize = 4 * m + (kappa * (1 << eta));
-    println!("✓ Minimum rate denominator: 4m + κ*2^η = {}", min_rate_denominator);
+    loquat_debug!(
+        "✓ Minimum rate denominator: 4m + κ*2^η = {}",
+        min_rate_denominator
+    );
 
     let h_size = 2 * m;
     let (coset_h, generator_h, shift_h) = build_power_of_two_coset(h_size, &mut rng)?;
-    println!("✓ |H| = {}", coset_h.len());
+    loquat_debug!("✓ |H| = {}", coset_h.len());
 
     let u_size = min_rate_denominator.next_power_of_two();
     let mut coset_u_attempts = 0usize;
@@ -216,7 +288,11 @@ pub fn loquat_setup(lambda: usize) -> LoquatResult<LoquatPublicParams> {
             ));
         }
     };
-    println!("✓ |U| = {} (next power of 2 ≥ {})", coset_u.len(), min_rate_denominator);
+    loquat_debug!(
+        "✓ |U| = {} (next power of 2 ≥ {})",
+        coset_u.len(),
+        min_rate_denominator
+    );
 
     let mut rho_star_value = 1usize;
     while rho_star_value * coset_u.len() <= min_rate_denominator {
@@ -238,8 +314,8 @@ pub fn loquat_setup(lambda: usize) -> LoquatResult<LoquatPublicParams> {
         ((rho_star_value as f64).log2().ceil()) as usize
     };
     let r = ((log_u + rho_star_log) / eta).max(1);
-    println!("✓ ρ* = {} (power of two bound)", rho_star_value);
-    println!("✓ r (LDT round complexity): {}", r);
+    loquat_debug!("✓ ρ* = {} (power of two bound)", rho_star_value);
+    loquat_debug!("✓ r (LDT round complexity): {}", r);
 
     let mut u_subgroups = Vec::with_capacity(r);
     let mut current_size = coset_u.len();
@@ -250,7 +326,7 @@ pub fn loquat_setup(lambda: usize) -> LoquatResult<LoquatPublicParams> {
         current_shift = current_shift.pow_two(eta);
         current_generator = current_generator.pow_two(eta);
         let layer = generate_coset_elements(current_generator, current_size, current_shift);
-        println!("  • U({}) size: {}", round + 1, layer.len());
+        loquat_debug!("  • U({}) size: {}", round + 1, layer.len());
         u_subgroups.push(layer);
     }
 
@@ -281,14 +357,15 @@ pub fn loquat_setup(lambda: usize) -> LoquatResult<LoquatPublicParams> {
         expand_domain,
     };
 
-    println!("\n--- STEP 5: Parameter Validation ---");
+    loquat_debug!("\n--- STEP 5: Parameter Validation ---");
     validate_loquat_parameters(&params)?;
-    println!("✓ All parameter constraints satisfied");
+    loquat_debug!("✓ All parameter constraints satisfied");
 
-    println!("\n--- OUTPUT: L-pp Generated Successfully ---");
+    loquat_debug!("\n--- OUTPUT: L-pp Generated Successfully ---");
     Ok(params)
 }
 
+#[cfg(feature = "std")]
 fn validate_loquat_parameters(params: &LoquatPublicParams) -> LoquatResult<()> {
     if params.b > params.l {
         return Err(LoquatError::invalid_parameters("B > L"));
@@ -303,13 +380,17 @@ fn validate_loquat_parameters(params: &LoquatPublicParams) -> LoquatResult<()> {
         return Err(LoquatError::invalid_parameters("|H| != 2m"));
     }
     if !params.coset_u.len().is_power_of_two() {
-        return Err(LoquatError::invalid_parameters("|U| must be a power of two"));
+        return Err(LoquatError::invalid_parameters(
+            "|U| must be a power of two",
+        ));
     }
     if cosets_intersect(&params.coset_h, &params.coset_u) {
         return Err(LoquatError::invalid_parameters("H and U must be disjoint"));
     }
     if params.u_subgroups.len() != params.r {
-        return Err(LoquatError::invalid_parameters("number of U layers must equal r"));
+        return Err(LoquatError::invalid_parameters(
+            "number of U layers must equal r",
+        ));
     }
     for &num in params.rho_numerators.iter() {
         if num > params.rho_star_num {
@@ -319,8 +400,12 @@ fn validate_loquat_parameters(params: &LoquatPublicParams) -> LoquatResult<()> {
     if params.h_generator.pow(params.coset_h.len() as u128) != F2::one() {
         return Err(LoquatError::invalid_parameters("invalid H generator order"));
     }
-    if params.coset_h.len() > 1 && params.h_generator.pow((params.coset_h.len() / 2) as u128) == F2::one() {
-        return Err(LoquatError::invalid_parameters("H generator order too small"));
+    if params.coset_h.len() > 1
+        && params.h_generator.pow((params.coset_h.len() / 2) as u128) == F2::one()
+    {
+        return Err(LoquatError::invalid_parameters(
+            "H generator order too small",
+        ));
     }
     if params.u_generator.pow(params.coset_u.len() as u128) != F2::one() {
         return Err(LoquatError::invalid_parameters("invalid U generator order"));

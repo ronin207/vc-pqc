@@ -1,10 +1,10 @@
-use serde::{Serialize, Deserialize};
-use super::keygen::{LoquatKeyPair};
-use super::field_utils::{legendre_prf_secure, F, u128_to_field};
-use super::setup::LoquatPublicParams;
 use super::errors::LoquatResult;
-use merlin::Transcript;
-use sha2::{Sha256, Digest};
+use super::field_utils::{legendre_prf_secure, u128_to_field, F};
+use super::keygen::LoquatKeyPair;
+use super::setup::LoquatPublicParams;
+use super::transcript::Transcript;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// Algorithm 1: IOP-based Key Identification of the Legendre PRF
 /// This is the core protocol that enables SNARK-friendly signature generation
@@ -36,7 +36,11 @@ pub struct IOPWitness {
     pub secret_key: F,
 }
 
-pub fn create_iop_instance(keypair: &LoquatKeyPair, params: &LoquatPublicParams, message: &[u8]) -> IOPInstance {
+pub fn create_iop_instance(
+    keypair: &LoquatKeyPair,
+    params: &LoquatPublicParams,
+    message: &[u8],
+) -> IOPInstance {
     let mut hasher = Sha256::new();
     hasher.update(message);
     let message_hash = hasher.finalize().to_vec();
@@ -56,7 +60,10 @@ pub fn create_iop_witness(secret_key: F) -> IOPWitness {
 fn init_transcript(instance: &IOPInstance, message: &[u8]) -> Transcript {
     let mut transcript = Transcript::new(b"loquat_iop_protocol");
     transcript.append_message(b"public_key", &field_slice_to_bytes(&instance.public_key));
-    transcript.append_message(b"public_indices", &field_slice_to_bytes(&instance.public_indices));
+    transcript.append_message(
+        b"public_indices",
+        &field_slice_to_bytes(&instance.public_indices),
+    );
     transcript.append_message(b"message_hash", &instance.message_hash);
     transcript.append_message(b"message", message);
     transcript
@@ -148,26 +155,28 @@ pub fn verify_iop_proof(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loquat::setup::loquat_setup;
     use crate::loquat::keygen::keygen_with_params;
+    use crate::loquat::setup::loquat_setup;
     use rand::thread_rng;
-    
+
     #[test]
     fn test_iop_key_identification() {
         let params = loquat_setup(128).expect("Setup failed");
         let keypair = keygen_with_params(&params).expect("Keygen failed");
-        
+
         let message = b"test message";
         let iop_instance = create_iop_instance(&keypair, &params, message);
         let iop_witness = create_iop_witness(keypair.secret_key);
 
         let mut transcript = Transcript::new(b"test_iop");
-        let proof_result = iop_key_identification(&params, &iop_instance, &iop_witness, &mut transcript);
+        let proof_result =
+            iop_key_identification(&params, &iop_instance, &iop_witness, &mut transcript);
         assert!(proof_result.is_ok());
 
         let proof = proof_result.unwrap();
         let mut verifier_transcript = Transcript::new(b"test_iop");
-        let is_valid = verify_iop_proof(&params, &iop_instance, &proof, &mut verifier_transcript).unwrap();
+        let is_valid =
+            verify_iop_proof(&params, &iop_instance, &proof, &mut verifier_transcript).unwrap();
         assert!(is_valid);
     }
 
@@ -180,12 +189,13 @@ mod tests {
         let witness = create_iop_witness(keypair.secret_key);
 
         let mut prover_transcript = init_transcript(&instance, message);
-        let proof = iop_key_identification(&params, &instance, &witness, &mut prover_transcript).unwrap();
+        let proof =
+            iop_key_identification(&params, &instance, &witness, &mut prover_transcript).unwrap();
 
         let mut verifier_transcript = init_transcript(&instance, message);
         assert!(verify_iop_proof(&params, &instance, &proof, &mut verifier_transcript).unwrap());
     }
-    
+
     #[test]
     fn test_invalid_witness_rejection() {
         let params = loquat_setup(128).expect("Setup failed");
@@ -195,13 +205,16 @@ mod tests {
         let mut rng = thread_rng();
         let random_offset = F::rand(&mut rng);
         let invalid_witness = create_iop_witness(keypair.secret_key + random_offset);
-        
+
         let mut prover_transcript = init_transcript(&instance, message);
-        let proof = iop_key_identification(&params, &instance, &invalid_witness, &mut prover_transcript).unwrap();
-        
+        let proof =
+            iop_key_identification(&params, &instance, &invalid_witness, &mut prover_transcript)
+                .unwrap();
+
         let mut verifier_transcript = init_transcript(&instance, message);
-        let verification_result = verify_iop_proof(&params, &instance, &proof, &mut verifier_transcript);
-        
+        let verification_result =
+            verify_iop_proof(&params, &instance, &proof, &mut verifier_transcript);
+
         assert!(verification_result.is_ok());
         assert!(!verification_result.unwrap());
     }
@@ -210,26 +223,36 @@ mod tests {
     fn test_challenge_determinism() {
         let params = loquat_setup(128).expect("Setup failed");
         let keypair = keygen_with_params(&params).expect("Keygen failed");
-        
+
         let message = b"Determinism test";
         let instance = create_iop_instance(&keypair, &params, message);
         let mut transcript1 = init_transcript(&instance, message);
-        transcript1.append_message(b"commitment", &field_slice_to_bytes(&[F::new(42), F::new(123)]));
+        transcript1.append_message(
+            b"commitment",
+            &field_slice_to_bytes(&[F::new(42), F::new(123)]),
+        );
 
         let mut transcript2 = init_transcript(&instance, message);
-        transcript2.append_message(b"commitment", &field_slice_to_bytes(&[F::new(42), F::new(123)]));
+        transcript2.append_message(
+            b"commitment",
+            &field_slice_to_bytes(&[F::new(42), F::new(123)]),
+        );
 
-        let challenges1 = (0..params.n).map(|_| {
-            let mut buf = [0u8; 32];
-            transcript1.challenge_bytes(b"challenge", &mut buf);
-            F::new(u128::from_le_bytes(buf[..16].try_into().unwrap()))
-        }).collect::<Vec<F>>();
+        let challenges1 = (0..params.n)
+            .map(|_| {
+                let mut buf = [0u8; 32];
+                transcript1.challenge_bytes(b"challenge", &mut buf);
+                F::new(u128::from_le_bytes(buf[..16].try_into().unwrap()))
+            })
+            .collect::<Vec<F>>();
 
-        let challenges2 = (0..params.n).map(|_| {
-            let mut buf = [0u8; 32];
-            transcript2.challenge_bytes(b"challenge", &mut buf);
-            F::new(u128::from_le_bytes(buf[..16].try_into().unwrap()))
-        }).collect::<Vec<F>>();
+        let challenges2 = (0..params.n)
+            .map(|_| {
+                let mut buf = [0u8; 32];
+                transcript2.challenge_bytes(b"challenge", &mut buf);
+                F::new(u128::from_le_bytes(buf[..16].try_into().unwrap()))
+            })
+            .collect::<Vec<F>>();
 
         assert_eq!(challenges1, challenges2);
     }

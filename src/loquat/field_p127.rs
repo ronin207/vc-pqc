@@ -1,10 +1,12 @@
 //! Custom Field Implementation for p = 2^127 - 1
 
-use std::ops::{Add, Sub, Mul, Div, Neg, AddAssign, SubAssign, MulAssign};
-use std::fmt;
-use std::iter::Sum;
+use core::fmt;
+use core::iter::Sum;
+use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+#[cfg(feature = "std")]
 use rand::Rng;
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use serde::de::{self, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 // The prime modulus p = 2^127 - 1
 const MODULUS: u128 = (1 << 127) - 1;
@@ -20,7 +22,11 @@ impl Add for Fp127 {
     fn add(self, rhs: Self) -> Self {
         let (sum, carry) = self.0.overflowing_add(rhs.0);
         let result = if carry { sum.wrapping_add(1) } else { sum };
-        if result >= MODULUS { Self(result - MODULUS) } else { Self(result) }
+        if result >= MODULUS {
+            Self(result - MODULUS)
+        } else {
+            Self(result)
+        }
     }
 }
 
@@ -28,7 +34,11 @@ impl Sub for Fp127 {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         let (res, borrow) = self.0.overflowing_sub(rhs.0);
-        if borrow { Self(res.wrapping_add(MODULUS)) } else { Self(res) }
+        if borrow {
+            Self(res.wrapping_add(MODULUS))
+        } else {
+            Self(res)
+        }
     }
 }
 
@@ -65,30 +75,60 @@ impl Mul for Fp127 {
 
 impl Div for Fp127 {
     type Output = Self;
-    fn div(self, rhs: Self) -> Self { self * rhs.inverse().expect("Division by zero") }
+    fn div(self, rhs: Self) -> Self {
+        self * rhs.inverse().expect("Division by zero")
+    }
 }
 
 impl Neg for Fp127 {
     type Output = Self;
-    fn neg(self) -> Self { if self.0 == 0 { self } else { Self(MODULUS - self.0) } }
+    fn neg(self) -> Self {
+        if self.0 == 0 {
+            self
+        } else {
+            Self(MODULUS - self.0)
+        }
+    }
 }
 
-impl AddAssign for Fp127 { fn add_assign(&mut self, rhs: Self) { *self = *self + rhs; } }
-impl SubAssign for Fp127 { fn sub_assign(&mut self, rhs: Self) { *self = *self - rhs; } }
-impl MulAssign for Fp127 { fn mul_assign(&mut self, rhs: Self) { *self = *self * rhs; } }
+impl AddAssign for Fp127 {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+impl SubAssign for Fp127 {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+impl MulAssign for Fp127 {
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
 
 impl Fp127 {
-    pub fn new(val: u128) -> Self { Self(val % MODULUS) }
-    pub fn zero() -> Self { Self(0) }
-    pub fn one() -> Self { Self(1) }
-    pub fn is_zero(&self) -> bool { self.0 == 0 }
+    pub fn new(val: u128) -> Self {
+        Self(val % MODULUS)
+    }
+    pub fn zero() -> Self {
+        Self(0)
+    }
+    pub fn one() -> Self {
+        Self(1)
+    }
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
 
     pub fn pow(self, exp: u128) -> Self {
         let mut res = Self::one();
         let mut base = self;
         let mut e = exp;
         while e > 0 {
-            if e % 2 == 1 { res *= base; }
+            if e % 2 == 1 {
+                res *= base;
+            }
             base *= base;
             e /= 2;
         }
@@ -96,10 +136,13 @@ impl Fp127 {
     }
 
     pub fn inverse(self) -> Option<Self> {
-        if self.is_zero() { return None; }
+        if self.is_zero() {
+            return None;
+        }
         Some(self.pow(MODULUS - 2))
     }
 
+    #[cfg(feature = "std")]
     pub fn rand<R: Rng>(rng: &mut R) -> Self {
         loop {
             let candidate = rng.gen::<u128>() & ((1u128 << 127) - 1);
@@ -109,6 +152,7 @@ impl Fp127 {
         }
     }
 
+    #[cfg(feature = "std")]
     pub fn rand_nonzero<R: Rng>(rng: &mut R) -> Self {
         loop {
             let value = Self::rand(rng);
@@ -120,29 +164,79 @@ impl Fp127 {
 }
 
 impl fmt::Debug for Fp127 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "Fp127(0x{:x})", self.0) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Fp127(0x{:x})", self.0)
+    }
 }
 
 impl Serialize for Fp127 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bytes(&self.0.to_le_bytes())
+        serializer.serialize_u128(self.0)
+    }
+}
+
+struct Fp127Visitor;
+
+impl<'de> Visitor<'de> for Fp127Visitor {
+    type Value = Fp127;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a 128-bit field element represented as bytes or an integer")
+    }
+
+    fn visit_u128<E>(self, value: u128) -> Result<Self::Value, E> {
+        Ok(Fp127::new(value))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(Fp127::new(value as u128))
+    }
+
+    fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E> {
+        Ok(Fp127::new(value as u128))
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        if v.len() != 16 {
+            return Err(E::invalid_length(v.len(), &"16 bytes"));
+        }
+        let mut arr = [0u8; 16];
+        arr.copy_from_slice(v);
+        Ok(Fp127::new(u128::from_le_bytes(arr)))
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut bytes = [0u8; 16];
+        for i in 0..16 {
+            let next: Option<u8> = seq.next_element()?;
+            let value = next.ok_or_else(|| de::Error::invalid_length(i, &"16 bytes"))?;
+            bytes[i] = value;
+        }
+        Ok(Fp127::new(u128::from_le_bytes(bytes)))
     }
 }
 
 impl<'de> Deserialize<'de> for Fp127 {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if bytes.len() != 16 {
-            return Err(serde::de::Error::invalid_length(bytes.len(), &"16 bytes"));
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_any(Fp127Visitor)
+        } else {
+            deserializer.deserialize_u128(Fp127Visitor)
         }
-        let val = u128::from_le_bytes(bytes.try_into().unwrap());
-        Ok(Fp127::new(val))
     }
 }
 
 // --- Extension Field Fp2 ---
-lazy_static::lazy_static! {
-    static ref QNR: Fp127 = Fp127::new(3);
+
+#[inline(always)]
+fn qnr() -> Fp127 {
+    Fp127(3)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -152,15 +246,25 @@ pub struct Fp2 {
 }
 
 impl Fp2 {
-    pub fn new(c0: Fp127, c1: Fp127) -> Self { Self { c0, c1 } }
-    pub fn zero() -> Self { Self::new(Fp127::zero(), Fp127::zero()) }
-    pub fn one() -> Self { Self::new(Fp127::one(), Fp127::zero()) }
-    pub fn is_zero(&self) -> bool { self.c0.is_zero() && self.c1.is_zero() }
+    pub fn new(c0: Fp127, c1: Fp127) -> Self {
+        Self { c0, c1 }
+    }
+    pub fn zero() -> Self {
+        Self::new(Fp127::zero(), Fp127::zero())
+    }
+    pub fn one() -> Self {
+        Self::new(Fp127::one(), Fp127::zero())
+    }
+    pub fn is_zero(&self) -> bool {
+        self.c0.is_zero() && self.c1.is_zero()
+    }
 
+    #[cfg(feature = "std")]
     pub fn rand<R: Rng>(rng: &mut R) -> Self {
         Self::new(Fp127::rand(rng), Fp127::rand(rng))
     }
 
+    #[cfg(feature = "std")]
     pub fn rand_nonzero<R: Rng>(rng: &mut R) -> Self {
         loop {
             let candidate = Self::rand(rng);
@@ -171,8 +275,10 @@ impl Fp2 {
     }
 
     pub fn inverse(self) -> Option<Self> {
-        if self.is_zero() { return None; }
-        let denominator = self.c0*self.c0 - self.c1*self.c1 * *QNR;
+        if self.is_zero() {
+            return None;
+        }
+        let denominator = self.c0 * self.c0 - self.c1 * self.c1 * qnr();
         let inv_denom = denominator.inverse()?;
         Some(Self::new(self.c0 * inv_denom, -self.c1 * inv_denom))
     }
@@ -199,14 +305,18 @@ impl Fp2 {
     }
 }
 
-impl Add for Fp2 { 
+impl Add for Fp2 {
     type Output = Self;
-    fn add(self, rhs: Self) -> Self { Self::new(self.c0 + rhs.c0, self.c1 + rhs.c1) }
+    fn add(self, rhs: Self) -> Self {
+        Self::new(self.c0 + rhs.c0, self.c1 + rhs.c1)
+    }
 }
 
 impl Sub for Fp2 {
     type Output = Self;
-    fn sub(self, rhs: Self) -> Self { Self::new(self.c0 - rhs.c0, self.c1 - rhs.c1) }
+    fn sub(self, rhs: Self) -> Self {
+        Self::new(self.c0 - rhs.c0, self.c1 - rhs.c1)
+    }
 }
 
 impl Mul for Fp2 {
@@ -215,13 +325,15 @@ impl Mul for Fp2 {
         let ac = self.c0 * rhs.c0;
         let bd = self.c1 * rhs.c1;
         let ad_plus_bc = (self.c0 + self.c1) * (rhs.c0 + rhs.c1) - ac - bd;
-        Self::new(ac + bd * *QNR, ad_plus_bc)
+        Self::new(ac + bd * qnr(), ad_plus_bc)
     }
 }
 
 impl Neg for Fp2 {
     type Output = Self;
-    fn neg(self) -> Self { Self::new(-self.c0, -self.c1) }
+    fn neg(self) -> Self {
+        Self::new(-self.c0, -self.c1)
+    }
 }
 
 impl AddAssign for Fp2 {
@@ -237,7 +349,9 @@ impl SubAssign for Fp2 {
 }
 
 impl MulAssign for Fp2 {
-    fn mul_assign(&mut self, rhs: Self) { *self = *self * rhs; }
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
 }
 
 impl Sum for Fp2 {
@@ -253,7 +367,9 @@ impl<'a> Sum<&'a Fp2> for Fp2 {
 }
 
 impl fmt::Debug for Fp2 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "Fp2({:?}, {:?})", self.c0, self.c1) }
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Fp2({:?}, {:?})", self.c0, self.c1)
+    }
 }
 
 #[cfg(test)]

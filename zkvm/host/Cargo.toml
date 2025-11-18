@@ -1,0 +1,15 @@
+[package]
+name = "host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+methods = { path = "../methods" }
+risc0-zkvm = { version = "^3.0.3" }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+vc-pqc = { path = "../.." }
+bincode = "1.3"
+sha2 = "0.10"
+rand = "0.8"

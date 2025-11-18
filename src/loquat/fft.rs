@@ -1,5 +1,7 @@
 use crate::loquat::errors::{LoquatError, LoquatResult};
 use crate::loquat::field_utils::{F, F2};
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
 
 fn ensure_power_of_two(len: usize) -> LoquatResult<()> {
     if len == 0 {
@@ -91,11 +93,7 @@ pub fn ifft_in_place(values: &mut [F2], root: F2) -> LoquatResult<()> {
     Ok(())
 }
 
-pub fn evaluate_on_coset(
-    coeffs: &[F2],
-    shift: F2,
-    generator: F2,
-) -> LoquatResult<Vec<F2>> {
+pub fn evaluate_on_coset(coeffs: &[F2], shift: F2, generator: F2) -> LoquatResult<Vec<F2>> {
     if coeffs.is_empty() {
         return Ok(Vec::new());
     }
@@ -112,11 +110,7 @@ pub fn evaluate_on_coset(
     Ok(scaled_coeffs)
 }
 
-pub fn interpolate_on_coset(
-    evaluations: &[F2],
-    shift: F2,
-    generator: F2,
-) -> LoquatResult<Vec<F2>> {
+pub fn interpolate_on_coset(evaluations: &[F2], shift: F2, generator: F2) -> LoquatResult<Vec<F2>> {
     if evaluations.is_empty() {
         return Ok(Vec::new());
     }
@@ -192,9 +186,7 @@ mod tests {
         let (shift, generator) = derive_coset_parameters(coset);
 
         let mut rng = StdRng::seed_from_u64(42);
-        let coeffs: Vec<F2> = (0..coset.len())
-            .map(|_| Fp2::rand(&mut rng))
-            .collect();
+        let coeffs: Vec<F2> = (0..coset.len()).map(|_| Fp2::rand(&mut rng)).collect();
 
         let fft_evals = evaluate_on_coset(&coeffs, shift, generator).expect("fft eval succeeds");
         for (point, value) in coset.iter().zip(fft_evals.iter()) {
@@ -210,9 +202,7 @@ mod tests {
         let (shift, generator) = derive_coset_parameters(coset);
 
         let mut rng = StdRng::seed_from_u64(7);
-        let coeffs: Vec<F2> = (0..coset.len())
-            .map(|_| Fp2::rand(&mut rng))
-            .collect();
+        let coeffs: Vec<F2> = (0..coset.len()).map(|_| Fp2::rand(&mut rng)).collect();
 
         let values = evaluate_on_coset(&coeffs, shift, generator).expect("forward fft");
         let recovered = interpolate_on_coset(&values, shift, generator).expect("inverse fft");

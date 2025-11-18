@@ -3,7 +3,13 @@
 // This module provides a Merkle tree implementation for use in the LDT phase
 // of the Loquat signature scheme.
 
-use sha2::{Sha256, Digest};
+#[cfg(not(feature = "std"))]
+use alloc::vec;
+#[cfg(not(feature = "std"))]
+use alloc::vec::Vec;
+use sha2::{Digest, Sha256};
+#[cfg(feature = "std")]
+use std::vec::Vec;
 
 /// A Merkle tree.
 #[derive(Debug, Clone)]
@@ -17,7 +23,10 @@ impl MerkleTree {
     pub fn new<T: AsRef<[u8]>>(leaves: &[T]) -> Self {
         let leaf_count = leaves.len();
         if leaf_count == 0 {
-            return Self { nodes: vec![], leaf_count: 0 };
+            return Self {
+                nodes: vec![],
+                leaf_count: 0,
+            };
         }
         let mut nodes = vec![vec![0u8; 32]; 2 * leaf_count];
 
@@ -33,7 +42,7 @@ impl MerkleTree {
             hasher.update(&nodes[2 * i + 1]);
             nodes[i] = hasher.finalize().to_vec();
         }
-        
+
         Self { nodes, leaf_count }
     }
 
@@ -55,7 +64,11 @@ impl MerkleTree {
         let mut current_index = leaf_index + self.leaf_count;
 
         while current_index > 1 {
-            let sibling_index = if current_index % 2 == 0 { current_index + 1 } else { current_index - 1 };
+            let sibling_index = if current_index % 2 == 0 {
+                current_index + 1
+            } else {
+                current_index - 1
+            };
             path.push(self.nodes[sibling_index].clone());
             current_index /= 2;
         }
@@ -64,7 +77,12 @@ impl MerkleTree {
     }
 
     /// Verify an authentication path.
-    pub fn verify_auth_path<T: AsRef<[u8]>>(root: &[u8], leaf: T, leaf_index: usize, path: &[Vec<u8>]) -> bool {
+    pub fn verify_auth_path<T: AsRef<[u8]>>(
+        root: &[u8],
+        leaf: T,
+        leaf_index: usize,
+        path: &[Vec<u8>],
+    ) -> bool {
         let mut current_hash = Sha256::digest(leaf.as_ref()).to_vec();
         let mut current_index_in_level = leaf_index;
 
