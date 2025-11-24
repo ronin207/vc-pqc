@@ -96,6 +96,197 @@ pub struct LoquatSignature {
     pub ldt_proof: LDTProof,
     /// The message commitment.
     pub message_commitment: Vec<u8>,
+    /// Optional signing transcript for debugging/instrumentation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<LoquatSigningTranscript>,
+}
+
+impl LoquatSignature {
+    pub fn new(
+        artifact: LoquatSignatureArtifact,
+        transcript: Option<LoquatSigningTranscript>,
+    ) -> Self {
+        Self {
+            root_c: artifact.root_c,
+            root_s: artifact.root_s,
+            root_h: artifact.root_h,
+            t_values: artifact.t_values,
+            o_values: artifact.o_values,
+            c_prime_evals: artifact.c_prime_evals,
+            s_evals: artifact.s_evals,
+            h_evals: artifact.h_evals,
+            f_prime_evals: artifact.f_prime_evals,
+            p_evals: artifact.p_evals,
+            pi_rows: artifact.pi_rows,
+            f0_evals: artifact.f0_evals,
+            fri_challenges: artifact.fri_challenges,
+            fri_codewords: artifact.fri_codewords,
+            fri_rows: artifact.fri_rows,
+            e_vector: artifact.e_vector,
+            s_sum: artifact.s_sum,
+            mu: artifact.mu,
+            z_challenge: artifact.z_challenge,
+            pi_us: artifact.pi_us,
+            ldt_proof: artifact.ldt_proof,
+            message_commitment: artifact.message_commitment,
+            transcript,
+        }
+    }
+
+    pub fn artifact(&self) -> LoquatSignatureArtifact {
+        self.into()
+    }
+
+    pub fn transcript(&self) -> Option<&LoquatSigningTranscript> {
+        self.transcript.as_ref()
+    }
+}
+
+#[cfg(feature = "std")]
+pub fn flatten_signature_for_hash(signature: &LoquatSignature) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&signature.root_c);
+    bytes.extend_from_slice(&signature.root_s);
+    bytes.extend_from_slice(&signature.root_h);
+    flatten_field_matrix(&signature.t_values, &mut bytes);
+    flatten_field_matrix(&signature.o_values, &mut bytes);
+    flatten_field2_matrix(&signature.c_prime_evals, &mut bytes);
+    flatten_field2_vector(&signature.s_evals, &mut bytes);
+    flatten_field2_vector(&signature.h_evals, &mut bytes);
+    flatten_field2_vector(&signature.f_prime_evals, &mut bytes);
+    flatten_field2_vector(&signature.p_evals, &mut bytes);
+    flatten_field2_matrix(&signature.pi_rows, &mut bytes);
+    flatten_field2_vector(&signature.f0_evals, &mut bytes);
+    flatten_field2_vector(&signature.fri_challenges, &mut bytes);
+    flatten_nested_field2(&signature.fri_codewords, &mut bytes);
+    flatten_two_nested_field2(&signature.fri_rows, &mut bytes);
+    flatten_field2_vector(&signature.e_vector, &mut bytes);
+    bytes.extend_from_slice(&field_utils::field2_to_bytes(&signature.s_sum));
+    bytes.extend_from_slice(&field_utils::field2_to_bytes(&signature.mu));
+    bytes.extend_from_slice(&field_utils::field2_to_bytes(&signature.z_challenge));
+    bytes.extend_from_slice(&field_utils::field2_to_bytes(&signature.pi_us.claimed_sum));
+    bytes.extend_from_slice(&field_utils::field2_to_bytes(
+        &signature.pi_us.final_evaluation,
+    ));
+    for poly in &signature.pi_us.round_polynomials {
+        bytes.extend_from_slice(&field_utils::field2_to_bytes(&poly.c0));
+        bytes.extend_from_slice(&field_utils::field2_to_bytes(&poly.c1));
+    }
+    for opening in &signature.ldt_proof.openings {
+        bytes.extend_from_slice(&(opening.position as u64).to_le_bytes());
+        flatten_nested_field2(&opening.codeword_chunks, &mut bytes);
+        bytes.extend_from_slice(&field_utils::field2_to_bytes(&opening.final_eval));
+        flatten_two_nested_field2(&opening.row_chunks, &mut bytes);
+        flatten_byte_paths(&opening.auth_path, &mut bytes);
+    }
+    bytes
+}
+
+#[cfg(feature = "std")]
+fn flatten_field_matrix(matrix: &[Vec<F>], out: &mut Vec<u8>) {
+    for row in matrix {
+        for value in row {
+            out.extend_from_slice(&field_utils::field_to_bytes(value));
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+fn flatten_field2_matrix(matrix: &[Vec<F2>], out: &mut Vec<u8>) {
+    for row in matrix {
+        flatten_field2_vector(row, out);
+    }
+}
+
+#[cfg(feature = "std")]
+fn flatten_field2_vector(values: &[F2], out: &mut Vec<u8>) {
+    for value in values {
+        out.extend_from_slice(&field_utils::field2_to_bytes(value));
+    }
+}
+
+#[cfg(feature = "std")]
+fn flatten_nested_field2(matrix: &[Vec<F2>], out: &mut Vec<u8>) {
+    for row in matrix {
+        flatten_field2_vector(row, out);
+    }
+}
+
+#[cfg(feature = "std")]
+fn flatten_two_nested_field2(blocks: &[Vec<Vec<F2>>], out: &mut Vec<u8>) {
+    for block in blocks {
+        flatten_nested_field2(block, out);
+    }
+}
+
+#[cfg(feature = "std")]
+fn flatten_byte_paths(paths: &[Vec<u8>], out: &mut Vec<u8>) {
+    for node in paths {
+        out.extend_from_slice(node);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoquatSignatureArtifact {
+    pub root_c: [u8; 32],
+    pub root_s: [u8; 32],
+    pub root_h: [u8; 32],
+    pub t_values: Vec<Vec<F>>,
+    pub o_values: Vec<Vec<F>>,
+    pub c_prime_evals: Vec<Vec<F2>>,
+    pub s_evals: Vec<F2>,
+    pub h_evals: Vec<F2>,
+    pub f_prime_evals: Vec<F2>,
+    pub p_evals: Vec<F2>,
+    pub pi_rows: Vec<Vec<F2>>,
+    pub f0_evals: Vec<F2>,
+    pub fri_challenges: Vec<F2>,
+    pub fri_codewords: Vec<Vec<F2>>,
+    pub fri_rows: Vec<Vec<Vec<F2>>>,
+    pub e_vector: Vec<F2>,
+    pub s_sum: F2,
+    pub mu: F2,
+    pub z_challenge: F2,
+    pub pi_us: UnivariateSumcheckProof,
+    pub ldt_proof: LDTProof,
+    pub message_commitment: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LoquatSigningTranscript {
+    /// Randomness matrix r_{j,i} captured during signing.
+    pub randomness_matrix: Vec<Vec<F>>,
+    /// Original evaluations of c_j over H before masking.
+    pub c_evals_on_h: Vec<Vec<F2>>,
+}
+
+impl From<&LoquatSignature> for LoquatSignatureArtifact {
+    fn from(sig: &LoquatSignature) -> Self {
+        Self {
+            root_c: sig.root_c,
+            root_s: sig.root_s,
+            root_h: sig.root_h,
+            t_values: sig.t_values.clone(),
+            o_values: sig.o_values.clone(),
+            c_prime_evals: sig.c_prime_evals.clone(),
+            s_evals: sig.s_evals.clone(),
+            h_evals: sig.h_evals.clone(),
+            f_prime_evals: sig.f_prime_evals.clone(),
+            p_evals: sig.p_evals.clone(),
+            pi_rows: sig.pi_rows.clone(),
+            f0_evals: sig.f0_evals.clone(),
+            fri_challenges: sig.fri_challenges.clone(),
+            fri_codewords: sig.fri_codewords.clone(),
+            fri_rows: sig.fri_rows.clone(),
+            e_vector: sig.e_vector.clone(),
+            s_sum: sig.s_sum,
+            mu: sig.mu,
+            z_challenge: sig.z_challenge,
+            pi_us: sig.pi_us.clone(),
+            ldt_proof: sig.ldt_proof.clone(),
+            message_commitment: sig.message_commitment.clone(),
+        }
+    }
 }
 
 #[cfg(feature = "std")]
@@ -515,7 +706,7 @@ pub fn loquat_sign(
 
     loquat_debug!("\n--- FINAL SIGNATURE ASSEMBLY ---");
 
-    let signature = LoquatSignature {
+    let artifact = LoquatSignatureArtifact {
         root_c,
         root_s,
         root_h,
@@ -540,10 +731,15 @@ pub fn loquat_sign(
         message_commitment,
     };
 
+    let transcript = LoquatSigningTranscript {
+        randomness_matrix: r_values,
+        c_evals_on_h: c_on_h_per_j,
+    };
+
     loquat_debug!("✓ σ = {{root_c, root_s, root_h, T_{{i,j}}, o_{{i,j}}, πUS, πLDT}} assembled");
 
     loquat_debug!("================== ALGORITHMS 4-6 COMPLETE ==================\n");
-    Ok(signature)
+    Ok(LoquatSignature::new(artifact, Some(transcript)))
 }
 
 #[cfg(feature = "std")]

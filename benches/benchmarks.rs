@@ -1,11 +1,22 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use vc_pqc::loquat::{
-    benchmark::{BenchmarkConfig, HashType, LoquatBenchmark},
-    keygen::keygen_with_params,
-    setup::loquat_setup,
-    sign::loquat_sign,
-    verify::loquat_verify,
+use vc_pqc::{
+    loquat::{
+        benchmark::{BenchmarkConfig, HashType, LoquatBenchmark},
+        field_utils::F,
+        keygen::keygen_with_params,
+        setup::loquat_setup,
+        sign::loquat_sign,
+        verify::loquat_verify,
+    },
+    snarks::{
+        aurora_prove, aurora_verify, fractal_prove, fractal_verify, AuroraParams, FractalParams,
+        R1csConstraint, R1csInstance, R1csWitness,
+    },
 };
+
+const PAPER_CONSTRAINT_QUERIES: usize = 8;
+const PAPER_WITNESS_QUERIES: usize = 8;
+const PAPER_RECURSION_LAYERS: usize = 2;
 
 fn bench_loquat_setup(c: &mut Criterion) {
     c.bench_function("loquat_setup_128", |b| {
@@ -104,6 +115,81 @@ fn bench_custom_benchmark_suite(c: &mut Criterion) {
     });
 }
 
+fn sample_r1cs_instance() -> (R1csInstance, R1csWitness) {
+    let num_variables = 4; // 1 (constant) + x + y + z
+    let mut a = vec![F::zero(); num_variables];
+    a[1] = F::one();
+    let mut b = vec![F::zero(); num_variables];
+    b[2] = F::one();
+    let mut c = vec![F::zero(); num_variables];
+    c[3] = F::one();
+    let constraint = R1csConstraint::new(a, b, c);
+    let instance = R1csInstance::new(num_variables, vec![constraint]).unwrap();
+    let witness = R1csWitness::new(vec![F::new(3), F::new(5), F::new(15)]);
+    (instance, witness)
+}
+
+fn bench_aurora_pipeline(c: &mut Criterion) {
+    let (instance, witness) = sample_r1cs_instance();
+    let aurora_params = AuroraParams {
+        constraint_query_count: PAPER_CONSTRAINT_QUERIES,
+        witness_query_count: PAPER_WITNESS_QUERIES,
+    };
+
+    c.bench_function("aurora_prove_standard", |b| {
+        b.iter(|| black_box(aurora_prove(&instance, &witness, &aurora_params)).unwrap())
+    });
+
+    let proof = aurora_prove(&instance, &witness, &aurora_params).unwrap();
+    c.bench_function("aurora_verify_standard", |b| {
+        b.iter(|| {
+            let verified =
+                black_box(aurora_verify(&instance, &proof, &aurora_params, None)).unwrap();
+            assert!(verified.is_some());
+        })
+    });
+
+    c.bench_function("aurora_round_trip_standard", |b| {
+        b.iter(|| {
+            let proof = aurora_prove(&instance, &witness, &aurora_params).unwrap();
+            let verified = aurora_verify(&instance, &proof, &aurora_params, None)
+                .unwrap()
+                .is_some();
+            assert!(verified);
+        })
+    });
+}
+
+fn bench_fractal_pipeline(c: &mut Criterion) {
+    let (instance, witness) = sample_r1cs_instance();
+    let fractal_params = FractalParams {
+        aurora: AuroraParams {
+            constraint_query_count: PAPER_CONSTRAINT_QUERIES,
+            witness_query_count: PAPER_WITNESS_QUERIES,
+        },
+        recursion_layers: PAPER_RECURSION_LAYERS,
+    };
+
+    c.bench_function("fractal_prove_standard", |b| {
+        b.iter(|| black_box(fractal_prove(&instance, &witness, &fractal_params)).unwrap())
+    });
+
+    let proof = fractal_prove(&instance, &witness, &fractal_params).unwrap();
+    c.bench_function("fractal_verify_standard", |b| {
+        b.iter(|| {
+            let valid = black_box(fractal_verify(&instance, &proof, &fractal_params)).unwrap();
+            assert!(valid);
+        })
+    });
+
+    c.bench_function("fractal_round_trip_standard", |b| {
+        b.iter(|| {
+            let proof = fractal_prove(&instance, &witness, &fractal_params).unwrap();
+            assert!(fractal_verify(&instance, &proof, &fractal_params).unwrap());
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_loquat_setup,
@@ -112,7 +198,9 @@ criterion_group!(
     bench_loquat_verify,
     bench_loquat_full_flow,
     bench_security_levels,
-    bench_custom_benchmark_suite
+    bench_custom_benchmark_suite,
+    bench_aurora_pipeline,
+    bench_fractal_pipeline
 );
 
 criterion_main!(benches);

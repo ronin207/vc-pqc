@@ -74,6 +74,8 @@ macro_rules! loquat_debug {
 #[cfg(feature = "std")]
 pub mod bdec;
 pub mod loquat;
+#[cfg(feature = "std")]
+pub mod snarks;
 // pub mod anoncreds;
 
 // Re-export commonly used types for convenience
@@ -89,7 +91,15 @@ pub use loquat::keygen::{keygen_with_params, LoquatKeyPair};
 #[cfg(feature = "std")]
 pub use loquat::{loquat_setup, loquat_sign};
 pub use loquat::{
-    loquat_verify, LoquatError, LoquatPublicParams, LoquatResult, LoquatSignature, Transcript,
+    loquat_verify, LoquatError, LoquatPublicParams, LoquatResult, LoquatSignature,
+    LoquatSignatureArtifact, LoquatSigningTranscript, Transcript,
+};
+#[cfg(feature = "std")]
+pub use snarks::{
+    aurora_prove, aurora_prove_with_options, aurora_verify, fractal_prove, fractal_verify,
+    AuroraParams, AuroraProof, AuroraProverOptions, AuroraVerificationHints,
+    AuroraVerificationResult, FractalParams, FractalProof, R1csConstraint, R1csInstance,
+    R1csWitness,
 };
 
 /*

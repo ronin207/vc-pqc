@@ -49,8 +49,10 @@ pub use iop_key_id::{iop_key_identification, verify_iop_proof, IOPInstance, IOPP
 #[cfg(feature = "std")]
 pub use keygen::{keygen_with_params, LoquatKeyPair};
 #[cfg(feature = "std")]
+pub use sign::flatten_signature_for_hash;
+#[cfg(feature = "std")]
 pub use sign::loquat_sign;
-pub use sign::LoquatSignature;
+pub use sign::{LoquatSignature, LoquatSignatureArtifact, LoquatSigningTranscript};
 #[cfg(feature = "std")]
 pub use sumcheck::generate_sumcheck_proof;
 pub use sumcheck::{verify_sumcheck_proof, UnivariateSumcheckProof};

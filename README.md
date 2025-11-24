@@ -214,6 +214,22 @@ cargo test    # All 13 tests pass
 cargo run     # Complete demo with all algorithms
 ```
 
+## SNARK Metrics CLI
+
+To inspect signature sizes, R1CS dimensions, and Aurora prove/verify timings for a real Loquat credential, run the stats helper:
+
+```bash
+cargo run --bin loquat_snark_stats --
+```
+
+You can optionally provide the security level and message length:
+
+```bash
+cargo run --bin loquat_snark_stats -- 192 64
+```
+
+The tool prints Loquat signing/verification times, serialized signature size, R1CS variable and constraint counts from `build_loquat_r1cs`, and Aurora proof size plus prove/verify timings. This is the easiest way to answer “how much R1CS gets exercised for a given credential?” without diving into Criterion benchmarks.
+
 ## Implementation Architecture
 
 ### Module Structure

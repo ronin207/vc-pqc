@@ -1,7 +1,6 @@
 use super::encoding;
 use super::errors::{LoquatError, LoquatResult};
 use super::field_utils::{self, field2_to_bytes, u128_to_field, F, F2};
-
 use super::setup::LoquatPublicParams;
 use super::sign::LoquatSignature;
 use super::sumcheck::verify_sumcheck_proof;
@@ -54,6 +53,7 @@ fn expand_challenge<T>(
     results
 }
 
+/* LEGACY LDT VERIFICATION (kept verbatim per user request)
 fn verify_ldt_proof(
     signature: &LoquatSignature,
     params: &LoquatPublicParams,
@@ -271,7 +271,415 @@ fn verify_ldt_proof(
     loquat_debug!("✓ LDT VERIFICATION SUCCESSFUL");
     Ok(true)
 }
+*/
 
+fn verify_ldt_proof(
+    signature: &LoquatSignature,
+    params: &LoquatPublicParams,
+    transcript: &mut Transcript,
+) -> LoquatResult<bool> {
+    loquat_debug!("--- Algorithm 7 · Phase III: Low-Degree Test ---");
+    let ldt_proof = &signature.ldt_proof;
+
+    if ldt_proof.commitments.len() != params.r + 1 || ldt_proof.openings.len() != params.kappa {
+        loquat_debug!(
+            "✗ LDT transcript malformed (commitments={}, openings={})",
+            ldt_proof.commitments.len(),
+            ldt_proof.openings.len()
+        );
+        return Ok(false);
+    }
+
+    transcript.append_message(b"merkle_commitment", &ldt_proof.commitments[0]);
+    let mut folding_challenges = Vec::with_capacity(params.r);
+    for round in 0..params.r {
+        folding_challenges.push(transcript_challenge_f2(transcript));
+        if round + 1 < ldt_proof.commitments.len() {
+            transcript.append_message(b"merkle_commitment", &ldt_proof.commitments[round + 1]);
+        }
+    }
+
+    if signature.fri_challenges != folding_challenges
+        || signature.fri_codewords.len() != params.r + 1
+        || signature.fri_rows.len() != params.r + 1
+    {
+        loquat_debug!("✗ FRI transcript mismatch");
+        return Ok(false);
+    }
+
+    for (layer_idx, layer) in signature.fri_codewords.iter().enumerate() {
+        let leaves = encoding::serialize_field2_leaves(layer);
+        let tree = super::merkle::MerkleTree::new(&leaves);
+        let root = tree.root().ok_or_else(|| LoquatError::MerkleError {
+            operation: "verify_fri_root".to_string(),
+            details: "empty layer".to_string(),
+        })?;
+        if root.as_slice() != ldt_proof.commitments[layer_idx] {
+            loquat_debug!("✗ Layer {} commitment mismatch", layer_idx);
+            return Ok(false);
+        }
+    }
+
+    let chunk_size = 1 << params.eta;
+    for (query_idx, opening) in ldt_proof.openings.iter().enumerate() {
+        let challenge = transcript_challenge_f2(transcript);
+        let expected_position = challenge.c0.0 as usize % signature.fri_codewords[0].len();
+        if opening.position != expected_position {
+            loquat_debug!("✗ Query {} position mismatch", query_idx);
+            return Ok(false);
+        }
+        if opening.codeword_chunks.len() != params.r || opening.row_chunks.len() != params.r {
+            loquat_debug!("✗ Query {} missing folding chunks", query_idx);
+            return Ok(false);
+        }
+
+        let mut fold_index = opening.position;
+        for round in 0..params.r {
+            let layer_len = signature.fri_codewords[round].len();
+            let chunk_len = chunk_size.min(layer_len);
+            let chunk_start = if layer_len > chunk_size {
+                (fold_index / chunk_size) * chunk_size
+            } else {
+                0
+            };
+            let chunk_end = (chunk_start + chunk_len).min(layer_len);
+
+            if opening.codeword_chunks[round]
+                != signature.fri_codewords[round][chunk_start..chunk_end]
+            {
+                loquat_debug!(
+                    "✗ Query {} round {} codeword chunk mismatch",
+                    query_idx,
+                    round
+                );
+                return Ok(false);
+            }
+
+            let mut coeff = F2::one();
+            let mut accumulated = F2::zero();
+            for &entry in &opening.codeword_chunks[round] {
+                accumulated += entry * coeff;
+                coeff *= signature.fri_challenges[round];
+            }
+
+            if accumulated != signature.fri_codewords[round + 1][fold_index / chunk_size] {
+                loquat_debug!("✗ Query {} round {} folding mismatch", query_idx, round);
+                return Ok(false);
+            }
+
+            for (row_idx, chunk) in opening.row_chunks[round].iter().enumerate() {
+                let expected = &signature.fri_rows[round][row_idx][chunk_start..chunk_end];
+                if chunk != expected {
+                    loquat_debug!(
+                        "✗ Query {} Π-row chunk mismatch (round {}, row {})",
+                        query_idx,
+                        round,
+                        row_idx
+                    );
+                    return Ok(false);
+                }
+                let mut coeff = F2::one();
+                let mut folded_row = F2::zero();
+                for &entry in chunk.iter() {
+                    folded_row += entry * coeff;
+                    coeff *= signature.fri_challenges[round];
+                }
+                if folded_row != signature.fri_rows[round + 1][row_idx][fold_index / chunk_size] {
+                    loquat_debug!(
+                        "✗ Query {} Π-row folding mismatch (round {}, row {})",
+                        query_idx,
+                        round,
+                        row_idx
+                    );
+                    return Ok(false);
+                }
+            }
+
+            if layer_len > chunk_size {
+                fold_index /= chunk_size;
+            } else {
+                fold_index = 0;
+            }
+        }
+
+        let final_eval = signature.fri_codewords.last().unwrap()[fold_index];
+        if final_eval != opening.final_eval {
+            loquat_debug!("✗ Query {} final evaluation mismatch", query_idx);
+            return Ok(false);
+        }
+        let leaf_bytes = field2_to_bytes(&opening.final_eval).to_vec();
+        if !super::merkle::MerkleTree::verify_auth_path(
+            ldt_proof.commitments.last().unwrap().as_ref(),
+            &leaf_bytes,
+            fold_index,
+            &opening.auth_path,
+        ) {
+            loquat_debug!("✗ Query {} final authentication failure", query_idx);
+            return Ok(false);
+        }
+    }
+
+    loquat_debug!("✓ κ = {} LDT queries validated", params.kappa);
+    Ok(true)
+}
+
+struct Algorithm7Verifier<'a> {
+    message: &'a [u8],
+    signature: &'a LoquatSignature,
+    public_key: &'a [F],
+    params: &'a LoquatPublicParams,
+    transcript: Transcript,
+}
+
+impl<'a> Algorithm7Verifier<'a> {
+    fn new(
+        message: &'a [u8],
+        signature: &'a LoquatSignature,
+        public_key: &'a [F],
+        params: &'a LoquatPublicParams,
+    ) -> Self {
+        let mut transcript = Transcript::new(b"loquat_signature");
+        transcript.append_message(b"message", message);
+        Self {
+            message,
+            signature,
+            public_key,
+            params,
+            transcript,
+        }
+    }
+
+    fn verify_message_commitment(&mut self) -> LoquatResult<()> {
+        let mut hasher = Sha256::new();
+        hasher.update(self.message);
+        let commitment = hasher.finalize().to_vec();
+        self.transcript
+            .append_message(b"message_commitment", &commitment);
+        if commitment != self.signature.message_commitment {
+            loquat_debug!("✗ Message commitment mismatch");
+            return Err(LoquatError::verification_failure(
+                "message commitment mismatch",
+            ));
+        }
+        loquat_debug!("✓ Message binding verified");
+        Ok(())
+    }
+
+    fn absorb_sigma1(&mut self) -> LoquatResult<Vec<usize>> {
+        self.transcript
+            .append_message(b"root_c", &self.signature.root_c);
+        let t_bytes = encoding::serialize_field_matrix(&self.signature.t_values);
+        self.transcript.append_message(b"t_values", &t_bytes);
+
+        let mut h1 = [0u8; 32];
+        self.transcript.challenge_bytes(b"h1", &mut h1);
+        let num_checks = self.params.m * self.params.n;
+        let indices = expand_challenge(&h1, num_checks, b"I_indices", &mut |slice| {
+            (u64::from_le_bytes(slice[..8].try_into().unwrap()) as usize) % self.params.l
+        });
+        Ok(indices)
+    }
+
+    fn absorb_sigma2(&mut self) -> LoquatResult<(Vec<F>, Vec<F2>)> {
+        let o_bytes = encoding::serialize_field_matrix(&self.signature.o_values);
+        self.transcript.append_message(b"o_values", &o_bytes);
+
+        let mut h2 = [0u8; 32];
+        self.transcript.challenge_bytes(b"h2", &mut h2);
+        let num_checks = self.params.m * self.params.n;
+        let lambdas: Vec<F> = expand_challenge(&h2, num_checks, b"lambdas", &mut |slice| {
+            field_utils::bytes_to_field_element(slice)
+        });
+        let epsilons: Vec<F2> = expand_challenge(&h2, self.params.n, b"e_j", &mut |slice| {
+            F2::new(field_utils::bytes_to_field_element(slice), F::zero())
+        });
+        Ok((lambdas, epsilons))
+    }
+
+    fn verify_legendre_constraints(
+        &self,
+        indices: &[usize],
+        lambdas: &[F],
+        epsilons: &[F2],
+    ) -> LoquatResult<()> {
+        for j in 0..self.params.n {
+            for i in 0..self.params.m {
+                let o_ij = self.signature.o_values[j][i];
+                let t_ij = self.signature.t_values[j][i];
+                let pk_entry = self.public_key[indices[j * self.params.m + i]];
+                if o_ij.is_zero() {
+                    loquat_debug!("✗ o[{}][{}] is zero", j, i);
+                    return Err(LoquatError::verification_failure("o_ij must be non-zero"));
+                }
+                let actual = field_utils::legendre_prf_secure(o_ij);
+                let expected = pk_entry + t_ij - u128_to_field(2) * pk_entry * t_ij;
+                if actual != expected {
+                    loquat_debug!("✗ Legendre PRF check failed at ({},{})", j, i);
+                    return Err(LoquatError::verification_failure(
+                        "Legendre PRF consistency failed",
+                    ));
+                }
+            }
+        }
+
+        let mut mu = F2::zero();
+        for j in 0..self.params.n {
+            let epsilon = epsilons[j];
+            for i in 0..self.params.m {
+                mu += epsilon
+                    * F2::new(
+                        lambdas[j * self.params.m + i] * self.signature.o_values[j][i],
+                        F::zero(),
+                    );
+            }
+        }
+        if mu != self.signature.mu {
+            loquat_debug!("✗ μ mismatch");
+            return Err(LoquatError::verification_failure("μ mismatch"));
+        }
+        Ok(())
+    }
+
+    fn verify_pi_rows(&self) -> LoquatResult<()> {
+        if self.signature.pi_rows.len() != 8 {
+            loquat_debug!("✗ Π row stack length mismatch");
+            return Err(LoquatError::verification_failure(
+                "Π row stack length mismatch",
+            ));
+        }
+        let n_u = self.params.coset_u.len();
+        if self.signature.c_prime_evals.len() != self.params.n
+            || self.signature.s_evals.len() != n_u
+            || self.signature.h_evals.len() != n_u
+            || self.signature.f_prime_evals.len() != n_u
+            || self.signature.p_evals.len() != n_u
+            || self.signature.f0_evals.len() != n_u
+            || self.signature.pi_rows.iter().any(|row| row.len() != n_u)
+        {
+            loquat_debug!("✗ Evaluation vector size mismatch");
+            return Err(LoquatError::verification_failure(
+                "evaluation vector size mismatch",
+            ));
+        }
+
+        let mut c_row = vec![F2::zero(); n_u];
+        for idx in 0..n_u {
+            for col in &self.signature.c_prime_evals {
+                c_row[idx] += col[idx];
+            }
+        }
+        if c_row != self.signature.pi_rows[0]
+            || self.signature.s_evals != self.signature.pi_rows[1]
+            || self.signature.h_evals != self.signature.pi_rows[2]
+            || self.signature.p_evals != self.signature.pi_rows[3]
+        {
+            loquat_debug!("✗ Π₀ rows mismatch");
+            return Err(LoquatError::verification_failure("Π₀ rows mismatch"));
+        }
+
+        for row_idx in 0..4 {
+            let exponent = self
+                .params
+                .rho_star_num
+                .checked_sub(self.params.rho_numerators[row_idx])
+                .ok_or_else(|| LoquatError::invalid_parameters("ρ* < ρ_i"))?
+                as u128;
+            let mut scaled = Vec::with_capacity(n_u);
+            for (value, &y) in self.signature.pi_rows[row_idx]
+                .iter()
+                .zip(self.params.coset_u.iter())
+            {
+                scaled.push(*value * y.pow(exponent));
+            }
+            if scaled != self.signature.pi_rows[row_idx + 4] {
+                loquat_debug!("✗ Π₁ row {} mismatch", row_idx + 1);
+                return Err(LoquatError::verification_failure("Π₁ rows mismatch"));
+            }
+        }
+
+        if self.signature.e_vector.len() != 8 {
+            loquat_debug!("✗ e-vector length mismatch");
+            return Err(LoquatError::verification_failure(
+                "e-vector length mismatch",
+            ));
+        }
+
+        let mut f0_expected = vec![F2::zero(); n_u];
+        for (row_idx, row) in self.signature.pi_rows.iter().enumerate() {
+            for (col, value) in row.iter().enumerate() {
+                f0_expected[col] += self.signature.e_vector[row_idx] * *value;
+            }
+        }
+        if f0_expected != self.signature.f0_evals {
+            loquat_debug!("✗ f^(0) mismatch");
+            return Err(LoquatError::verification_failure("f^(0) mismatch"));
+        }
+        Ok(())
+    }
+
+    fn verify_sumcheck(&mut self) -> LoquatResult<()> {
+        loquat_debug!("--- Algorithm 7 · Sumcheck Verification ---");
+        let num_variables = (self.params.coset_h.len()).trailing_zeros() as usize;
+        if !verify_sumcheck_proof(&self.signature.pi_us, num_variables, &mut self.transcript)? {
+            loquat_debug!("✗ Sumcheck verification failed");
+            return Err(LoquatError::verification_failure(
+                "sumcheck verification failed",
+            ));
+        }
+        Ok(())
+    }
+
+    fn absorb_sigma3_sigma4(&mut self) -> LoquatResult<()> {
+        self.transcript
+            .append_message(b"root_s", &self.signature.root_s);
+        let s_sum_bytes = field2_to_bytes(&self.signature.s_sum);
+        self.transcript.append_message(b"s_sum", &s_sum_bytes);
+
+        let mut h3 = [0u8; 32];
+        self.transcript.challenge_bytes(b"h3", &mut h3);
+        let z = F2::new(field_utils::bytes_to_field_element(&h3), F::zero());
+        if z != self.signature.z_challenge {
+            loquat_debug!("✗ z challenge mismatch");
+            return Err(LoquatError::verification_failure("z challenge mismatch"));
+        }
+
+        self.transcript
+            .append_message(b"root_h", &self.signature.root_h);
+        let mut h4 = [0u8; 32];
+        self.transcript.challenge_bytes(b"h4", &mut h4);
+        let expected_e = expand_challenge(&h4, 8, b"e_vector", &mut |slice| {
+            F2::new(field_utils::bytes_to_field_element(slice), F::zero())
+        });
+        if expected_e != self.signature.e_vector {
+            loquat_debug!("✗ e-vector mismatch");
+            return Err(LoquatError::verification_failure("e-vector mismatch"));
+        }
+        Ok(())
+    }
+
+    fn verify_ldt(&mut self) -> LoquatResult<()> {
+        if !verify_ldt_proof(self.signature, self.params, &mut self.transcript)? {
+            loquat_debug!("✗ Low-degree test failed");
+            return Err(LoquatError::verification_failure("low-degree test failed"));
+        }
+        Ok(())
+    }
+
+    fn run(mut self) -> LoquatResult<()> {
+        self.verify_message_commitment()?;
+        let indices = self.absorb_sigma1()?;
+        let (lambdas, epsilons) = self.absorb_sigma2()?;
+        self.verify_legendre_constraints(&indices, &lambdas, &epsilons)?;
+        self.verify_pi_rows()?;
+        self.verify_sumcheck()?;
+        self.absorb_sigma3_sigma4()?;
+        self.verify_ldt()?;
+        loquat_debug!("✓ Loquat verification completed");
+        Ok(())
+    }
+}
+
+/* LEGACY LOQUAT VERIFY (retained verbatim for reference)
 pub fn loquat_verify(
     message: &[u8],
     signature: &LoquatSignature,
@@ -494,6 +902,21 @@ pub fn loquat_verify(
     loquat_debug!("\n--- ALGORITHM 7: FINAL DECISION ---");
     loquat_debug!("✓ VERIFICATION SUCCESSFUL: Signature is valid");
     Ok(true)
+}
+*/
+
+pub fn loquat_verify(
+    message: &[u8],
+    signature: &LoquatSignature,
+    public_key: &Vec<F>,
+    params: &LoquatPublicParams,
+) -> LoquatResult<bool> {
+    let verifier = Algorithm7Verifier::new(message, signature, public_key, params);
+    match verifier.run() {
+        Ok(()) => Ok(true),
+        Err(LoquatError::VerificationFailure { .. }) => Ok(false),
+        Err(err) => Err(err),
+    }
 }
 
 #[cfg(test)]

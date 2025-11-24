@@ -16,6 +16,7 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 rand = { version = "0.8.5", optional = true }
 rand_chacha = { version = "0.3.1", optional = true }
 tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"], optional = true }
 bincode = { version = "1.3.3", optional = true }
 risc0-zkvm = { version = "^3.0.3", optional = true, default-features = false }
 
@@ -30,6 +31,7 @@ std = [
     "rand",
     "rand_chacha",
     "tracing",
+    "tracing-subscriber",
     "bincode",
     "risc0-zkvm/std",
     "sha2/std",

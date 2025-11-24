@@ -1,5 +1,5 @@
 use super::transcript::Transcript;
-use crate::loquat::errors::LoquatResult;
+use crate::loquat::errors::{LoquatError, LoquatResult};
 use crate::loquat::field_utils::{field2_to_bytes, F, F2};
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
@@ -245,6 +245,43 @@ pub fn verify_sumcheck_proof(
     loquat_debug!("  Match: {}", last_sum == proof.final_evaluation);
     loquat_debug!("✓ SUMCHECK VERIFICATION COMPLETE: All rounds passed");
     Ok(true)
+}
+
+pub fn replay_sumcheck_challenges(
+    proof: &UnivariateSumcheckProof,
+    num_variables: usize,
+    transcript: &mut Transcript,
+) -> LoquatResult<Vec<F2>> {
+    if proof.round_polynomials.len() != num_variables {
+        return Err(LoquatError::sumcheck_error(
+            "challenge_replay",
+            "round polynomial length mismatch",
+        ));
+    }
+    append_f2_message(transcript, b"claimed_sum", &proof.claimed_sum);
+    let mut challenges = Vec::with_capacity(num_variables);
+    let mut last_sum = proof.claimed_sum;
+    for round_poly in &proof.round_polynomials {
+        let p0 = round_poly.evaluate(&F2::zero());
+        let p1 = round_poly.evaluate(&F2::one());
+        if p0 + p1 != last_sum {
+            return Err(LoquatError::sumcheck_error(
+                "challenge_replay",
+                "sum constraint mismatch",
+            ));
+        }
+        append_linear_polynomial(transcript, round_poly);
+        let challenge = transcript_challenge(transcript);
+        challenges.push(challenge);
+        last_sum = round_poly.evaluate(&challenge);
+    }
+    if last_sum != proof.final_evaluation {
+        return Err(LoquatError::sumcheck_error(
+            "challenge_replay",
+            "final evaluation mismatch",
+        ));
+    }
+    Ok(challenges)
 }
 
 fn transcript_challenge(transcript: &mut Transcript) -> F2 {

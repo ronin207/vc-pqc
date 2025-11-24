@@ -12,6 +12,7 @@ use crate::loquat::field_utils::F;
 use crate::loquat::{
     loquat_setup, loquat_sign, loquat_verify, LoquatPublicParams, LoquatSignature,
 };
+use crate::snarks::{aurora_prove, aurora_verify, build_loquat_r1cs, AuroraParams, AuroraProof};
 use crate::{keygen_with_params, LoquatError, LoquatKeyPair, LoquatResult};
 use bincode::Options;
 use rand::{distributions::Standard, Rng};
@@ -27,6 +28,7 @@ pub struct BdecPublicParams {
     pub loquat_params: LoquatPublicParams,
     pub max_attributes: usize,
     pub crs_digest: [u8; 32],
+    pub aurora_params: AuroraParams,
 }
 
 /// Revocation list storing serialized Loquat public keys (`LR`).
@@ -72,6 +74,7 @@ pub struct BdecPseudonymKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BdecCredentialProof {
     pub commitment: [u8; 32],
+    pub aurora_proof: AuroraProof,
 }
 
 /// Credential record produced by `CreGen`.
@@ -92,6 +95,7 @@ pub struct BdecShownCredential {
     pub credentials: Vec<BdecCredential>,
     pub verifier_pseudonym: BdecPseudonymKey,
     pub disclosed_attributes: Vec<String>,
+    pub disclosure_hash: [u8; 32],
     pub receipt: Receipt,
 }
 
@@ -108,6 +112,7 @@ pub fn bdec_setup(lambda: usize, max_attributes: usize) -> LoquatResult<BdecSyst
             loquat_params,
             max_attributes,
             crs_digest,
+            aurora_params: AuroraParams::default(),
         },
         revocation_list: BdecRevocationList::new(),
     })
@@ -146,13 +151,24 @@ pub fn bdec_issue_credential(
         loquat_sign(&attribute_hash, user_keypair, &system.params.loquat_params)?;
     let commitment = credential_commitment(pseudonym, &credential_signature, &attribute_hash)?;
 
+    let (r1cs_instance, r1cs_witness) = build_loquat_r1cs(
+        &attribute_hash,
+        &credential_signature,
+        &user_keypair.public_key,
+        &system.params.loquat_params,
+    )?;
+    let aurora_proof = aurora_prove(&r1cs_instance, &r1cs_witness, &system.params.aurora_params)?;
+
     Ok(BdecCredential {
         owner_public_key: user_keypair.public_key.clone(),
         pseudonym: pseudonym.clone(),
         attributes,
         attribute_hash,
         credential_signature,
-        proof: BdecCredentialProof { commitment },
+        proof: BdecCredentialProof {
+            commitment,
+            aurora_proof,
+        },
     })
 }
 
@@ -195,7 +211,27 @@ pub fn bdec_verify_credential(
         &credential.credential_signature,
         &credential.attribute_hash,
     )?;
-    Ok(expected_commitment == credential.proof.commitment)
+    if expected_commitment != credential.proof.commitment {
+        return Ok(false);
+    }
+
+    let (r1cs_instance, _) = build_loquat_r1cs(
+        &credential.attribute_hash,
+        &credential.credential_signature,
+        &credential.owner_public_key,
+        &system.params.loquat_params,
+    )?;
+    let proof_ok = aurora_verify(
+        &r1cs_instance,
+        &credential.proof.aurora_proof,
+        &system.params.aurora_params,
+        None,
+    )?
+    .is_some();
+    if !proof_ok {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// Revoke a user's long-term public key (`RevCre`).
@@ -233,11 +269,13 @@ pub fn bdec_show_credential(
 
     let canonical_disclosure = canonicalise_attributes(&disclosed_attributes)?;
     ensure_disclosure_subset(credentials, &canonical_disclosure)?;
+    let disclosure_hash = hash_attributes(&canonical_disclosure);
     Ok(BdecShownCredential {
         owner_public_key: owner_public_key.clone(),
         credentials: credentials.to_vec(),
         verifier_pseudonym,
         disclosed_attributes: canonical_disclosure,
+        disclosure_hash,
         receipt,
     })
 }
@@ -276,6 +314,10 @@ pub fn bdec_verify_shown_credential(
     }
 
     if let Err(_) = ensure_disclosure_subset(&shown.credentials, &shown.disclosed_attributes) {
+        return Ok(false);
+    }
+    let recomputed_hash = hash_attributes(&shown.disclosed_attributes);
+    if recomputed_hash != shown.disclosure_hash {
         return Ok(false);
     }
 
